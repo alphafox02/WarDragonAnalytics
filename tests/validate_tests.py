@@ -86,9 +86,9 @@ def main():
     print(f"Found: {test_count} tests")
 
     if test_count >= 45:
-        print("✅ Test count looks good!")
+        print("PASS Test count looks good!")
     else:
-        print("⚠️  Expected more tests")
+        print("WARN  Expected more tests")
 
     # Validate conftest.py
     conftest_path = tests_dir / 'conftest.py'
@@ -119,26 +119,26 @@ def main():
     all_found = True
     for expected in expected_fixtures:
         if expected in fixtures:
-            print(f"  ✅ {expected}")
+            print(f"  PASS {expected}")
         else:
-            print(f"  ❌ {expected} - NOT FOUND")
+            print(f"  FAIL {expected} - NOT FOUND")
             all_found = False
 
     # Summary
     print("\n" + "=" * 70)
     print("VALIDATION SUMMARY")
     print("=" * 70)
-    print(f"Test file: {'✅ FOUND' if test_api_path.exists() else '❌ MISSING'}")
-    print(f"Conftest file: {'✅ FOUND' if conftest_path.exists() else '❌ MISSING'}")
-    print(f"Test count: {test_count} ({'✅ GOOD' if test_count >= 45 else '⚠️ LOW'})")
+    print(f"Test file: {'PASS FOUND' if test_api_path.exists() else 'FAIL MISSING'}")
+    print(f"Conftest file: {'PASS FOUND' if conftest_path.exists() else 'FAIL MISSING'}")
+    print(f"Test count: {test_count} ({'PASS GOOD' if test_count >= 45 else 'WARN LOW'})")
     print(f"Fixtures: {len(fixtures)} total, {len(api_fixtures)} API-related")
-    print(f"Required fixtures: {'✅ ALL FOUND' if all_found else '❌ SOME MISSING'}")
+    print(f"Required fixtures: {'PASS ALL FOUND' if all_found else 'FAIL SOME MISSING'}")
 
     print("\n" + "=" * 70)
     print("Test Structure Validation: ", end="")
 
     if test_api_path.exists() and conftest_path.exists() and test_count >= 45 and all_found:
-        print("✅ PASSED")
+        print("PASS PASSED")
         print("=" * 70)
         print("\nTo run the tests, you'll need to install dependencies:")
         print("  pip install -r tests/requirements-test.txt")
@@ -147,7 +147,7 @@ def main():
         print("  pytest tests/test_api.py -v")
         return 0
     else:
-        print("❌ FAILED")
+        print("FAIL FAILED")
         print("=" * 70)
         return 1
 

@@ -610,11 +610,11 @@ The test suite provides **68 comprehensive tests** covering:
 
 | Component | Target | Achieved |
 |-----------|--------|----------|
-| KitHealth | 95%+ | ✅ 98% |
-| DatabaseWriter | 85%+ | ✅ 87% |
-| KitCollector | 85%+ | ✅ 86% |
-| CollectorService | 80%+ | ✅ 82% |
-| **Overall** | **80%+** | **✅ 85%** |
+| KitHealth | 95%+ | PASS 98% |
+| DatabaseWriter | 85%+ | PASS 87% |
+| KitCollector | 85%+ | PASS 86% |
+| CollectorService | 80%+ | PASS 82% |
+| **Overall** | **80%+** | **PASS 85%** |
 
 ### Key Features
 

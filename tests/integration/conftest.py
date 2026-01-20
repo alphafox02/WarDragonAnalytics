@@ -86,7 +86,7 @@ def docker_services():
             # Check API
             response = httpx.get(f"{TEST_API_URL}/health", timeout=5)
             if response.status_code == 200:
-                print("✅ All services are healthy!")
+                print("PASS All services are healthy!")
                 break
         except Exception:
             time.sleep(2)
