@@ -214,7 +214,6 @@ Available scenarios: `normal`, `repeated`, `coordinated`, `operator`, `multikit`
 ## Related Projects
 
 - [DragonSync](https://github.com/alphafox02/DragonSync) - Drone detection and TAK integration for WarDragon kits
-- [WarDragon](https://github.com/alphafox02/WarDragon) - Hardware platform for drone detection
 - [DragonOS](https://cemaxecuter.com/) - Linux distribution for SDR and drone detection
 
 ## License
