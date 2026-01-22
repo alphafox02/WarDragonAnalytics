@@ -6,7 +6,7 @@ Centralized logging, analysis, and visualization platform for drone detection da
 
 ## Overview
 
-WarDragon Analytics aggregates Remote ID drone detections, ADS-B aircraft tracks, and FPV signal detections from multiple WarDragon field kits into a single interface. It provides:
+WarDragon Analytics aggregates DroneID/Remote ID drone detections, ADS-B aircraft tracks, and FPV signal detections from multiple WarDragon field kits into a single interface. It provides:
 
 - **Real-time map display** of all drone and aircraft tracks across all kits
 - **Time-series database** (TimescaleDB) with 30-day retention and 1-year aggregates
