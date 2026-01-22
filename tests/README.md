@@ -119,11 +119,31 @@ tests/
 ### Unit Tests
 Fast tests that don't require external dependencies (no Docker, no database).
 
-**Files:** `test_api.py`, `test_collector.py`, `test_database.py`
+**Files:** `test_database.py` (skips if `TEST_DATABASE_URL` not set)
 
 **Run with:**
 ```bash
-pytest -m unit
+pytest -m "not api and not collector"
+```
+
+### API Tests
+Tests for FastAPI endpoints. Require the app to start (which needs database connectivity).
+
+**Files:** `test_api.py`, `test_patterns.py`
+
+**Run with:**
+```bash
+pytest -m api
+```
+
+### Collector Tests
+Tests for the collector service. Require heavy dependencies.
+
+**Files:** `test_collector.py`
+
+**Run with:**
+```bash
+pytest -m collector
 ```
 
 ### Integration Tests
@@ -450,50 +470,38 @@ pytest -n auto  # Use all CPU cores
 
 ## CI/CD Integration
 
-### GitHub Actions Example
+### Current GitHub Actions Configuration
+
+The CI pipeline runs tests that don't require Docker or database connectivity:
 
 ```yaml
-name: Tests
+- name: Run unit tests
+  run: |
+    pytest -v --tb=short --ignore=tests/integration -m "not api and not collector"
+```
 
-on: [push, pull_request]
+This skips:
+- `api` marked tests (require FastAPI app startup with database)
+- `collector` marked tests (require heavy dependencies)
+- `integration/` directory (require full Docker stack)
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+The remaining tests (like `test_database.py`) skip gracefully when `TEST_DATABASE_URL` is not set.
 
-    services:
-      postgres:
-        image: timescale/timescaledb:latest-pg15
-        env:
-          POSTGRES_DB: wardragon
-          POSTGRES_USER: wardragon
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+### Running Full Test Suite Locally
 
-    steps:
-      - uses: actions/checkout@v3
+For comprehensive testing with Docker:
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+```bash
+# Start the stack
+docker-compose up -d
 
-      - name: Install dependencies
-        run: |
-          pip install -r app/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov
+# Run all tests
+pytest -v
 
-      - name: Run tests
-        run: pytest -m "not slow" --cov=app --cov-report=xml
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+# Run specific categories
+pytest -m api -v        # API tests
+pytest -m collector -v  # Collector tests
+pytest -m integration   # Integration tests
 ```
 
 ## Best Practices
