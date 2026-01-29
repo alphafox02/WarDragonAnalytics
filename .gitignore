@@ -101,7 +101,6 @@ dmypy.json
 .pyre/
 
 # Database dumps and backups
-*.sql
 *.dump
 *.backup
 backups/
