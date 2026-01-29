@@ -29,6 +29,34 @@ Before you begin, ensure you have:
    - 50GB disk space (for 30 days of data from 5 kits)
    - Linux, macOS, or Windows with WSL2
 
+### Installing Docker on Ubuntu
+
+If you don't have Docker installed, here's the recommended setup for Ubuntu:
+
+```bash
+# Add Docker's official GPG key
+sudo apt-get update
+sudo apt-get install ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add the repository to Apt sources
+echo \
+  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+# Install Docker packages
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Add your user to the docker group (avoids needing sudo for docker commands)
+sudo usermod -aG docker $USER
+```
+
+**Important:** After adding your user to the docker group, log out and back in for the change to take effect.
+
 ---
 
 ## Installation

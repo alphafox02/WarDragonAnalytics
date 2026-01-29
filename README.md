@@ -33,7 +33,7 @@ WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
 
 ## Quick Start
 
-**Prerequisites:** Docker and Docker Compose
+**Prerequisites:** Docker and Docker Compose (see [QUICKSTART.md](QUICKSTART.md#installing-docker-on-ubuntu) for Ubuntu installation instructions)
 
 ```bash
 # Clone the repository
