@@ -26,7 +26,7 @@ WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
 ```
 
 **Data collected from each kit:**
-- Drones via Remote ID (DJI DroneID, Bluetooth Long Range, Wi-Fi Beacon/NAN)
+- Drones via DJI DroneID (OcuSync) and Remote ID (Bluetooth, Wi-Fi Beacon/NAN)
 - Aircraft via ADS-B (untested)
 - FPV signals (5.8GHz analog video) (untested)
 - Kit system health (CPU, memory, disk, temperature, GPS position)
@@ -102,7 +102,7 @@ Kits added via the Web UI are stored in the database and persist across restarts
 ### Web UI (Port 8090)
 
 - Interactive Leaflet map with drone tracks
-- Drone, pilot, and home location markers (when provided by Remote ID)
+- Drone, pilot, and home location markers (when provided by DroneID/Remote ID)
 - Track history trails
 - Real-time updates (5-second refresh)
 - Kit management interface
