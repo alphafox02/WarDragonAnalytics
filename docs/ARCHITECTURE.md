@@ -28,7 +28,7 @@ GET /update/check    -> Git update availability
 ```
 
 **Data Collected:**
-- **Drones:** Remote ID (DJI, BLE, Wi-Fi), pilot location, home point, FAA RID enrichment
+- **Drones:** DJI DroneID and Remote ID (BLE, Wi-Fi), pilot location, home point, FAA RID enrichment
 - **Aircraft:** ADS-B tracks (ICAO, callsign, altitude, speed)
 - **Signals:** FPV frequency detections (5.8GHz analog, DJI)
 - **System:** Kit GPS, health metrics, uptime

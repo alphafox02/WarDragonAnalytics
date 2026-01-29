@@ -239,7 +239,7 @@ async def sample_drones(db_conn, sample_kits) -> list[dict]:
     Insert sample drone tracks into the database.
 
     Creates diverse drone data including:
-    - DJI drones with Remote ID
+    - DJI drones (DroneID) and Remote ID drones
     - Generic drones
     - Aircraft (ADS-B)
     - Various locations and timestamps
