@@ -185,14 +185,16 @@ curl http://localhost:8090/api/patterns/multi-kit?hours=6
 This happens if you ran `docker compose up` directly without using `quickstart.sh`, or if the database initialization failed. The init scripts only run on first startup when the database volume is empty.
 
 ```bash
-# Option 1: Full reset (deletes all data, starts fresh)
+# Option 1: Full reset (WARNING: -v flag DELETES ALL DATA)
 docker compose down -v
 ./quickstart.sh
 
-# Option 2: Manually apply schema to existing database (preserves data)
+# Option 2: Apply schema to existing database (preserves data)
 docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
 docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
 ```
+
+> **Note:** Running `./quickstart.sh` alone is safe and won't delete data. The `-v` flag on `docker compose down` is what removes database volumes.
 
 **Containers won't start / port conflicts:**
 
