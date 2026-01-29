@@ -102,15 +102,21 @@ EOF
 # Reinitialize database
 echo -e "${YELLOW}Reinitializing database schema...${NC}"
 
-# Check if init.sql exists
-if [ ! -f "timescaledb/init.sql" ]; then
-    echo -e "${RED}Error: timescaledb/init.sql not found${NC}"
+# Check if init scripts exist
+if [ ! -f "timescaledb/01-init.sql" ]; then
+    echo -e "${RED}Error: timescaledb/01-init.sql not found${NC}"
     echo "Cannot reinitialize without init script."
     exit 1
 fi
 
-# Run init.sql
-$DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/init.sql
+# Run init scripts
+echo "Applying 01-init.sql..."
+$DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
+
+if [ -f "timescaledb/02-pattern-views.sql" ]; then
+    echo "Applying 02-pattern-views.sql..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
+fi
 
 echo ""
 echo -e "${GREEN}Database reset complete!${NC}"

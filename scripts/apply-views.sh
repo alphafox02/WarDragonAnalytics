@@ -23,9 +23,9 @@ if ! docker ps | grep -q wardragon-timescaledb; then
     exit 1
 fi
 
-# Apply views
-docker exec -e PGPASSWORD="$DB_PASSWORD" wardragon-timescaledb \
-    psql -U wardragon -d wardragon -f /docker-entrypoint-initdb.d/02-pattern-views.sql
+# Apply views (pipe from host file, don't rely on container mount)
+docker exec -i -e PGPASSWORD="$DB_PASSWORD" wardragon-timescaledb \
+    psql -U wardragon -d wardragon < "$PROJECT_DIR/timescaledb/02-pattern-views.sql"
 
 echo "Views applied successfully!"
 echo ""
