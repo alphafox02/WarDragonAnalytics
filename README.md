@@ -178,6 +178,36 @@ curl http://localhost:8090/api/patterns/multi-kit?hours=6
 | [SECURITY.md](SECURITY.md) | Security hardening |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and database schema |
 
+## Common Issues & Quick Fixes
+
+**Database schema missing / views not created:**
+
+This happens if you ran `docker compose up` directly without using `quickstart.sh`, or if the database initialization failed. The init scripts only run on first startup when the database volume is empty.
+
+```bash
+# Option 1: Full reset (deletes all data, starts fresh)
+docker compose down -v
+./quickstart.sh
+
+# Option 2: Manually apply schema to existing database (preserves data)
+docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
+docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
+```
+
+**Containers won't start / port conflicts:**
+
+```bash
+# Check what's using the ports
+sudo lsof -i :8090 -i :3000
+
+# Full cleanup and restart
+docker compose down -v
+docker system prune -f
+./quickstart.sh
+```
+
+For detailed troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ## Useful Commands
 
 ```bash
