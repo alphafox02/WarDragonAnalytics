@@ -1,4 +1,4 @@
-#!/bin/bash
+? #!/bin/bash
 # WarDragon Analytics Quick Start Script
 # Automated setup and deployment
 
@@ -121,6 +121,18 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
     echo "Check logs: $DOCKER_COMPOSE logs timescaledb"
 fi
 
+echo ""
+
+# Verify database schema was created
+echo "Verifying database schema..."
+if ! $DOCKER_CMD exec wardragon-timescaledb psql -U wardragon -d wardragon -c "SELECT 1 FROM kits LIMIT 1" &> /dev/null; then
+    echo -e "${YELLOW}Database tables not found - applying schema...${NC}"
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
+    echo -e "${GREEN}[OK] Database schema applied${NC}"
+else
+    echo -e "${GREEN}[OK] Database schema verified${NC}"
+fi
 echo ""
 
 # Display status
