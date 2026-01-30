@@ -33,7 +33,7 @@ WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
 
 ## Quick Start
 
-**Prerequisites:** Docker and Docker Compose (see [QUICKSTART.md](QUICKSTART.md#installing-docker-on-ubuntu) for Ubuntu installation instructions)
+**Prerequisites:** Docker and Docker Compose (see [docs/quickstart.md](docs/quickstart.md#installing-docker-on-ubuntu) for Ubuntu installation instructions)
 
 ```bash
 # Clone the repository
@@ -167,16 +167,36 @@ curl http://localhost:8090/api/patterns/multi-kit?hours=6
 
 ## Documentation
 
+All documentation is located in the [docs/](docs/) folder.
+
+### Getting Started
 | Document | Description |
 |----------|-------------|
-| [QUICKSTART.md](QUICKSTART.md) | Fast setup guide |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Detailed deployment instructions |
-| [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md) | Tactical operations workflows |
-| [API_REFERENCE.md](API_REFERENCE.md) | REST API documentation |
-| [GRAFANA_DASHBOARDS.md](GRAFANA_DASHBOARDS.md) | Dashboard usage guide |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions |
-| [SECURITY.md](SECURITY.md) | Security hardening |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and database schema |
+| [Quick Start Guide](docs/quickstart.md) | Get up and running in 5 minutes |
+| [Deployment Guide](docs/deployment.md) | Detailed deployment for production |
+| [Architecture](docs/architecture.md) | System design and database schema |
+
+### User Guides
+| Document | Description |
+|----------|-------------|
+| [Operator Guide](docs/operator-guide.md) | Tactical operations workflows |
+| [Grafana Dashboards](docs/grafana-dashboards.md) | Dashboard usage and customization |
+| [AI Assistant Setup](docs/ollama-setup.md) | Natural language query interface |
+
+### Reference
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/api-reference.md) | REST API documentation |
+| [Dashboard Queries](docs/dashboard-queries.md) | Grafana query reference |
+| [Collector Service](docs/collector-service.md) | Data collection internals |
+| [Test Data Generator](docs/test-data.md) | Generate realistic test data |
+
+### Operations
+| Document | Description |
+|----------|-------------|
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [Testing Guide](docs/testing.md) | Running and writing tests |
+| [Security](SECURITY.md) | Security hardening and best practices |
 
 ## Common Issues & Quick Fixes
 
@@ -208,7 +228,7 @@ docker system prune -f
 ./quickstart.sh
 ```
 
-For detailed troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Useful Commands
 
@@ -254,7 +274,7 @@ Apache 2.0
 
 ## Contributing
 
-1. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+1. Read [docs/architecture.md](docs/architecture.md)
 2. Open an issue to discuss your idea
 3. Fork, implement, test, submit PR
 

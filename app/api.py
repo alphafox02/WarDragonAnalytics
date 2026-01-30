@@ -1620,6 +1620,185 @@ async def get_night_activity(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =============================================================================
+# LLM-Powered Natural Language Query Endpoints
+# =============================================================================
+
+# LLM Service instance (lazy initialization)
+_llm_service = None
+
+
+def get_llm_service():
+    """Get or create LLM service instance."""
+    global _llm_service
+    if _llm_service is None:
+        from llm_service import LLMService
+        _llm_service = LLMService(db_pool)
+    return _llm_service
+
+
+class LLMQueryRequest(BaseModel):
+    """Request model for LLM query."""
+    question: str = Field(..., min_length=3, max_length=1000, description="Natural language question")
+    session_id: Optional[str] = Field(None, description="Session ID for conversation context")
+    include_summary: bool = Field(True, description="Include natural language summary of results")
+
+
+class LLMQueryResponse(BaseModel):
+    """Response model for LLM query."""
+    success: bool
+    response: Optional[str] = None  # Natural language response/summary
+    results: List[dict] = []  # Query result data
+    row_count: int = 0
+    query_executed: Optional[str] = None  # SQL query for transparency
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class LLMStatusResponse(BaseModel):
+    """Response model for LLM status check."""
+    available: bool
+    message: Optional[str] = None  # Error message if not available
+    ollama_url: Optional[str] = None
+    model: Optional[str] = None
+    available_models: Optional[List[str]] = None  # If Ollama running but model missing
+
+
+@app.get("/api/llm/status", response_model=LLMStatusResponse)
+async def get_llm_status():
+    """
+    Check if the LLM service is available and configured.
+
+    Returns information about:
+    - Whether LLM queries are enabled
+    - Ollama connectivity status
+    - Configured model
+    """
+    try:
+        service = get_llm_service()
+        status = await service.is_available()
+        return LLMStatusResponse(
+            available=status.get("available", False),
+            message=status.get("message"),
+            ollama_url=status.get("ollama_url"),
+            model=status.get("model"),
+            available_models=status.get("available_models")
+        )
+    except Exception as e:
+        logger.error(f"Failed to check LLM status: {e}")
+        return LLMStatusResponse(
+            available=False,
+            message=str(e),
+            ollama_url=None,
+            model=None
+        )
+
+
+@app.post("/api/llm/query", response_model=LLMQueryResponse)
+async def llm_query(request: LLMQueryRequest):
+    """
+    Query drone detection data using natural language.
+
+    Examples:
+    - "What drones were seen in the last hour?"
+    - "Show me DJI drones flying above 100 meters"
+    - "How many unique drones were detected today?"
+    - "Any FPV signals on 5800 MHz?"
+    - "Which kit has the most detections?"
+
+    The query is converted to safe SQL and executed against the database.
+    Results are returned with an optional natural language summary.
+    """
+    if not db_pool:
+        return LLMQueryResponse(
+            success=False,
+            error="Database unavailable"
+        )
+
+    try:
+        service = get_llm_service()
+
+        # Check if LLM is available
+        status = await service.is_available()
+        if not status["available"]:
+            return LLMQueryResponse(
+                success=False,
+                error=f"LLM service unavailable: {status.get('message', 'Unknown error')}"
+            )
+
+        # Execute query
+        result = await service.query(
+            request.question,
+            include_summary=request.include_summary
+        )
+
+        # Track conversation if session_id provided
+        session_id = request.session_id
+        if session_id:
+            from llm_service import conversation_manager
+            conversation_manager.add_turn(session_id, request.question, result)
+
+        # Build natural language response
+        if result.success:
+            if result.summary:
+                response_text = result.summary
+            elif result.row_count == 0:
+                response_text = f"No results found. {result.query_explanation}"
+            else:
+                response_text = f"Found {result.row_count} result{'s' if result.row_count != 1 else ''}. {result.query_explanation}"
+        else:
+            response_text = result.error or "Query failed"
+
+        return LLMQueryResponse(
+            success=result.success,
+            response=response_text,
+            results=result.data,
+            row_count=result.row_count,
+            query_executed=result.query_sql,
+            session_id=session_id,
+            error=result.error if not result.success else None
+        )
+
+    except Exception as e:
+        logger.error(f"LLM query failed: {e}")
+        return LLMQueryResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@app.get("/api/llm/examples")
+async def get_llm_examples():
+    """
+    Get example queries to help users understand what they can ask.
+
+    Returns categorized example queries for the UI.
+    """
+    try:
+        service = get_llm_service()
+        examples = service.get_example_queries()
+        return {"examples": examples}
+    except Exception as e:
+        logger.error(f"Failed to get LLM examples: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/llm/session/{session_id}")
+async def clear_llm_session(session_id: str):
+    """
+    Clear conversation history for a session.
+
+    Use this when starting a new conversation topic.
+    """
+    try:
+        from llm_service import conversation_manager
+        conversation_manager.clear_session(session_id)
+        return {"success": True, "message": f"Session {session_id} cleared"}
+    except Exception as e:
+        logger.error(f"Failed to clear session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
     """

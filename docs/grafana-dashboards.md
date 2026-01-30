@@ -744,7 +744,7 @@ Set up alerts for critical conditions:
 
 1. **"relation does not exist"**
    - Cause: Database views not created
-   - Fix: Apply `timescaledb/02-pattern-views.sql` (see [DEPLOYMENT.md](DEPLOYMENT.md))
+   - Fix: Apply `timescaledb/02-pattern-views.sql` (see [deployment.md](deployment.md))
 
 2. **"column does not exist"**
    - Cause: Schema mismatch
@@ -752,7 +752,7 @@ Set up alerts for critical conditions:
 
 3. **"syntax error"**
    - Cause: SQL query issue
-   - Fix: Check Grafana query editor, review [DASHBOARD_QUERIES.md](grafana/DASHBOARD_QUERIES.md)
+   - Fix: Check Grafana query editor, review [dashboard-queries.md](dashboard-queries.md)
 
 ### Slow Dashboard Performance
 
@@ -806,7 +806,7 @@ Build your own dashboards for specific use cases:
 1. Navigate to **Dashboards** → **New Dashboard**
 2. Add panel → Select visualization
 3. Configure query using TimescaleDB datasource
-4. Use queries from [DASHBOARD_QUERIES.md](grafana/DASHBOARD_QUERIES.md) as templates
+4. Use queries from [dashboard-queries.md](dashboard-queries.md) as templates
 5. Save dashboard
 
 **Example: Custom Watchlist Dashboard**
@@ -925,11 +925,11 @@ Create dynamic dashboards with variables:
 
 ## Support
 
-- **Deployment Issues:** See [DEPLOYMENT.md](DEPLOYMENT.md)
-- **Query Reference:** See [grafana/DASHBOARD_QUERIES.md](grafana/DASHBOARD_QUERIES.md)
-- **API Documentation:** See [API_REFERENCE.md](API_REFERENCE.md)
-- **Troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- **Operator Workflows:** See [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)
+- **Deployment Issues:** See [deployment.md](deployment.md)
+- **Query Reference:** See [dashboard-queries.md](dashboard-queries.md)
+- **API Documentation:** See [api-reference.md](api-reference.md)
+- **Troubleshooting:** See [troubleshooting.md](troubleshooting.md)
+- **Operator Workflows:** See [operator-guide.md](operator-guide.md)
 
 ---
 

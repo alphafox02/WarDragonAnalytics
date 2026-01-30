@@ -733,7 +733,7 @@ WHERE time > NOW() - INTERVAL '6 hours' GROUP BY drone_id HAVING MAX(speed) > 25
 
 - **README.md**: Overview and setup instructions
 - **PHASE2_PLAN.md**: Detailed Phase 2 feature specifications
-- **TESTING.md**: Testing procedures and test data generator usage
+- **testing.md**: Testing procedures and test data generator usage
 - **tests/README.md**: Test suite documentation
 
 For questions or issues, consult project documentation or open a GitHub issue.

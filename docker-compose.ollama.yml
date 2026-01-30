@@ -1,0 +1,42 @@
+# Optional Ollama service for AI Assistant
+#
+# Usage:
+#   docker compose -f docker-compose.ollama.yml up -d
+#   docker exec wardragon-ollama ollama pull llama3.1:8b
+#
+# Then set in .env:
+#   OLLAMA_URL=http://host.docker.internal:11434
+#
+# See docs/ollama-setup.md for full setup guide
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: wardragon-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Uncomment for NVIDIA GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ollama-data:

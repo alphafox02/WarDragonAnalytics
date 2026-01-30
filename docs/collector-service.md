@@ -416,6 +416,6 @@ Apache 2.0 (same as DragonSync)
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/WarDragonAnalytics/issues)
-- **Documentation**: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+- **Issues**: [GitHub Issues](https://github.com/alphafox02/WarDragonAnalytics/issues)
+- **Documentation**: [architecture.md](architecture.md)
 - **DragonSync**: [alphafox02/DragonSync](https://github.com/alphafox02/DragonSync)

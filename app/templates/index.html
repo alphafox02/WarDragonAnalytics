@@ -18,8 +18,11 @@
     <div class="header">
         <h1>WarDragon Analytics</h1>
         <div class="header-controls">
-            <button class="btn-icon" onclick="openKitManager()" title="Manage Kits">⚙️ Kits</button>
-            <button class="theme-toggle" onclick="toggleTheme()">Toggle Theme</button>
+            <button class="btn-icon btn-ai" onclick="toggleAIChat()" title="AI Assistant" id="ai-chat-btn">
+                <span class="ai-icon">AI</span> Ask
+            </button>
+            <button class="btn-icon" onclick="openKitManager()" title="Manage Kits">Kits</button>
+            <button class="theme-toggle" onclick="toggleTheme()">Theme</button>
             <div class="status-indicator">
                 <div class="status-dot"></div>
                 <span id="refresh-status">Auto-refresh: 5s</span>
@@ -27,6 +30,62 @@
             <div class="status-indicator">
                 <span id="last-update">Last update: --</span>
             </div>
+        </div>
+    </div>
+
+    <!-- AI Chat Panel -->
+    <div id="ai-chat-panel" class="ai-chat-panel">
+        <div class="ai-chat-header">
+            <h3>AI Assistant</h3>
+            <div class="ai-chat-status" id="ai-status">
+                <span class="ai-status-dot"></span>
+                <span id="ai-status-text">Checking...</span>
+            </div>
+            <button class="ai-chat-close" onclick="toggleAIChat()">&times;</button>
+        </div>
+
+        <div class="ai-chat-messages" id="ai-messages">
+            <!-- Welcome message -->
+            <div class="ai-message ai-message-assistant">
+                <div class="ai-message-content">
+                    <p><strong>Welcome!</strong> I can help you explore your drone detection data.</p>
+                    <p>Try asking questions like:</p>
+                    <ul>
+                        <li>"What drones were seen in the last hour?"</li>
+                        <li>"Show me DJI drones above 100 meters"</li>
+                        <li>"How many unique drones today?"</li>
+                        <li>"Any FPV signals detected?"</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="ai-quick-queries" id="ai-quick-queries">
+            <div class="ai-quick-label">Quick queries:</div>
+            <div class="ai-quick-buttons">
+                <button onclick="sendAIQuery('What drones were seen in the last hour?')">Recent drones</button>
+                <button onclick="sendAIQuery('How many unique drones today?')">Today's count</button>
+                <button onclick="sendAIQuery('Any FPV signals detected?')">FPV signals</button>
+                <button onclick="sendAIQuery('Which kit detected the most?')">Kit stats</button>
+            </div>
+        </div>
+
+        <div class="ai-chat-input-container">
+            <textarea
+                id="ai-input"
+                class="ai-chat-input"
+                placeholder="Ask about your drone data..."
+                rows="2"
+                onkeydown="handleAIInputKeydown(event)"
+            ></textarea>
+            <button class="ai-chat-send" onclick="sendAIQueryFromInput()" id="ai-send-btn">
+                Send
+            </button>
+        </div>
+
+        <div class="ai-chat-footer">
+            <span id="ai-model-info">Model: --</span>
+            <button class="ai-clear-btn" onclick="clearAIChat()">Clear Chat</button>
         </div>
     </div>
 

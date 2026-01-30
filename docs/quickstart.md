@@ -445,9 +445,9 @@ Then reset the database:
 3. **Export data** - Use CSV/KML export for offline analysis
 4. **Customize dashboards** - Create your own Grafana panels
 5. **Read the docs:**
-   - [Architecture Design](docs/ARCHITECTURE.md)
-   - [Development Guide](docs/DEVELOPMENT.md) (coming soon)
-   - [Deployment Guide](docs/DEPLOYMENT.md) (coming soon)
+   - [Architecture Design](architecture.md)
+   - [Development Guide](development.md) (coming soon)
+   - [Deployment Guide](deployment.md)
 
 ---
 
@@ -468,7 +468,7 @@ Then reset the database:
 
 - **Issues:** [GitHub Issues](https://github.com/yourusername/WarDragonAnalytics/issues)
 - **DragonSync:** [alphafox02/DragonSync](https://github.com/alphafox02/DragonSync)
-- **Documentation:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Documentation:** [architecture.md](architecture.md)
 
 ---
 

@@ -1416,6 +1416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initMap();
     setupAutoRefresh();
+    initAIChat();
 
     await fetchKits();
     await fetchData();
@@ -1669,4 +1670,347 @@ async function deleteKit(kitId, kitName) {
     } catch (error) {
         alert(`Failed to delete kit: ${error.message}`);
     }
+}
+
+
+// =============================================================================
+// AI Assistant Chat Functions
+// =============================================================================
+
+let aiSessionId = null;
+let aiChatOpen = false;
+
+// Toggle AI chat panel visibility
+function toggleAIChat() {
+    const panel = document.getElementById('ai-chat-panel');
+    const btn = document.getElementById('ai-chat-btn');
+
+    aiChatOpen = !aiChatOpen;
+
+    if (aiChatOpen) {
+        panel.classList.add('open');
+        if (btn) btn.classList.add('active');
+        // Check AI status when opening
+        checkAIStatus();
+        // Focus the input
+        setTimeout(() => {
+            const input = document.getElementById('ai-input');
+            if (input && !input.disabled) input.focus();
+        }, 300);
+    } else {
+        panel.classList.remove('open');
+        if (btn) btn.classList.remove('active');
+    }
+}
+
+// Check if AI/Ollama is available
+async function checkAIStatus() {
+    const statusEl = document.getElementById('ai-status');
+    const statusTextEl = document.getElementById('ai-status-text');
+    const modelEl = document.getElementById('ai-model-info');
+    const inputEl = document.getElementById('ai-input');
+    const sendBtn = document.getElementById('ai-send-btn');
+
+    statusEl.className = 'ai-chat-status checking';
+    statusTextEl.textContent = 'Checking...';
+
+    try {
+        const response = await fetch('/api/llm/status');
+        const data = await response.json();
+
+        if (data.available) {
+            statusEl.className = 'ai-chat-status online';
+            statusTextEl.textContent = 'Online';
+            modelEl.textContent = `Model: ${data.model || 'Unknown'}`;
+            inputEl.disabled = false;
+            sendBtn.disabled = false;
+            inputEl.placeholder = 'Ask about your drone data...';
+        } else {
+            statusEl.className = 'ai-chat-status offline';
+            statusTextEl.textContent = 'Offline';
+            modelEl.textContent = data.message || 'Ollama not available';
+            inputEl.disabled = true;
+            sendBtn.disabled = true;
+            inputEl.placeholder = 'AI assistant unavailable - check Ollama';
+        }
+    } catch (error) {
+        console.error('Failed to check AI status:', error);
+        statusEl.className = 'ai-chat-status offline';
+        statusTextEl.textContent = 'Error';
+        modelEl.textContent = 'Connection failed';
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+        inputEl.placeholder = 'AI assistant unavailable';
+    }
+}
+
+// Send AI query from a quick button
+async function sendAIQuery(question) {
+    const messagesContainer = document.getElementById('ai-messages');
+
+    // Add user message to chat
+    addAIChatMessage(question, 'user');
+
+    // Show loading indicator
+    const loadingId = addAILoadingMessage();
+
+    try {
+        const response = await fetch('/api/llm/query', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                question: question,
+                session_id: aiSessionId
+            })
+        });
+
+        const data = await response.json();
+
+        // Remove loading indicator
+        removeAILoadingMessage(loadingId);
+
+        if (data.success) {
+            // Store session ID for conversation context
+            if (data.session_id) {
+                aiSessionId = data.session_id;
+            }
+
+            // Add assistant response
+            addAIChatMessage(data.response, 'assistant', data.results, data.query_executed);
+        } else {
+            addAIChatMessage(`Sorry, I couldn't process that request: ${data.error || 'Unknown error'}`, 'assistant', null, null, true);
+        }
+    } catch (error) {
+        removeAILoadingMessage(loadingId);
+        console.error('AI query failed:', error);
+        addAIChatMessage('Sorry, there was an error connecting to the AI assistant. Please check that Ollama is running.', 'assistant', null, null, true);
+    }
+
+    // Scroll to bottom
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// Send AI query from the input field
+function sendAIQueryFromInput() {
+    const inputEl = document.getElementById('ai-input');
+    const question = inputEl.value.trim();
+
+    if (question) {
+        inputEl.value = '';
+        sendAIQuery(question);
+    }
+}
+
+// Handle keydown in AI input (Enter to send)
+function handleAIInputKeydown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendAIQueryFromInput();
+    }
+}
+
+// Add a message to the AI chat
+function addAIChatMessage(text, role, results = null, queryExecuted = null, isError = false) {
+    const messagesContainer = document.getElementById('ai-messages');
+
+    const messageEl = document.createElement('div');
+    // Use CSS class pattern: ai-message ai-message-{role}
+    const roleClass = role === 'user' ? 'ai-message-user' : 'ai-message-assistant';
+    messageEl.className = `ai-message ${roleClass}${isError ? ' ai-message-error' : ''}`;
+
+    let content = `<div class="ai-message-content">${escapeHtml(text)}`;
+
+    // Add query info if available (for transparency)
+    if (queryExecuted && role === 'assistant') {
+        content += `<div class="ai-query-info" title="SQL query executed">
+            <span class="ai-query-toggle" onclick="toggleQueryDetails(this)">Show query</span>
+            <pre class="ai-query-details" style="display: none;">${escapeHtml(queryExecuted)}</pre>
+        </div>`;
+    }
+
+    // Add results table if available
+    if (results && results.length > 0) {
+        content += formatAIResults(results);
+    }
+
+    content += '</div>';
+    messageEl.innerHTML = content;
+
+    messagesContainer.appendChild(messageEl);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// Add loading message
+function addAILoadingMessage() {
+    const messagesContainer = document.getElementById('ai-messages');
+    const loadingId = 'ai-loading-' + Date.now();
+
+    const loadingEl = document.createElement('div');
+    loadingEl.id = loadingId;
+    loadingEl.className = 'ai-message ai-message-assistant';
+    loadingEl.innerHTML = `
+        <div class="ai-message-content">
+            <div class="ai-message-loading">
+                <span></span><span></span><span></span>
+            </div>
+            <span style="margin-left: 8px;">Analyzing your data...</span>
+        </div>
+    `;
+
+    messagesContainer.appendChild(loadingEl);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    return loadingId;
+}
+
+// Remove loading message
+function removeAILoadingMessage(loadingId) {
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) {
+        loadingEl.remove();
+    }
+}
+
+// Format AI results as a table
+function formatAIResults(results) {
+    if (!results || results.length === 0) return '';
+
+    // Get columns from first result
+    const columns = Object.keys(results[0]);
+
+    let html = '<div class="ai-results-table-wrapper"><table class="ai-results-table"><thead><tr>';
+
+    // Header row
+    columns.forEach(col => {
+        html += `<th>${escapeHtml(formatColumnName(col))}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Data rows (limit to 20 for display)
+    const displayResults = results.slice(0, 20);
+    displayResults.forEach(row => {
+        html += '<tr>';
+        columns.forEach(col => {
+            const value = row[col];
+            html += `<td>${formatCellValue(value, col)}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+
+    // Show count if more results
+    if (results.length > 20) {
+        html += `<div class="ai-results-more">Showing 20 of ${results.length} results</div>`;
+    }
+
+    return html;
+}
+
+// Format column name for display
+function formatColumnName(col) {
+    return col
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Format cell value based on column type
+function formatCellValue(value, column) {
+    if (value === null || value === undefined) {
+        return '<span class="null-value">-</span>';
+    }
+
+    // Format timestamps
+    if (column.includes('time') || column.includes('date') || column.includes('seen')) {
+        try {
+            const date = new Date(value);
+            if (!isNaN(date.getTime())) {
+                return date.toLocaleString();
+            }
+        } catch (e) {}
+    }
+
+    // Format numbers
+    if (typeof value === 'number') {
+        // Coordinates
+        if (column === 'lat' || column === 'lon' || column.includes('_lat') || column.includes('_lon')) {
+            return value.toFixed(6);
+        }
+        // Altitude, speed
+        if (column === 'alt' || column === 'speed' || column === 'height') {
+            return value.toFixed(1);
+        }
+        // Counts and integers
+        if (Number.isInteger(value)) {
+            return value.toLocaleString();
+        }
+        // Other floats
+        return value.toFixed(2);
+    }
+
+    return escapeHtml(String(value));
+}
+
+// Toggle query details visibility
+function toggleQueryDetails(toggleEl) {
+    const detailsEl = toggleEl.nextElementSibling;
+    if (detailsEl.style.display === 'none') {
+        detailsEl.style.display = 'block';
+        toggleEl.textContent = 'Hide query';
+    } else {
+        detailsEl.style.display = 'none';
+        toggleEl.textContent = 'Show query';
+    }
+}
+
+// Clear AI chat conversation
+function clearAIChat() {
+    const messagesContainer = document.getElementById('ai-messages');
+
+    // Clear session on server if we have one
+    if (aiSessionId) {
+        fetch(`/api/llm/session/${aiSessionId}`, { method: 'DELETE' })
+            .catch(err => console.warn('Failed to clear session:', err));
+    }
+
+    // Generate new session ID
+    aiSessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+    // Reset to welcome message (matching the HTML structure)
+    messagesContainer.innerHTML = `
+        <div class="ai-message ai-message-assistant">
+            <div class="ai-message-content">
+                <p><strong>Welcome!</strong> I can help you explore your drone detection data.</p>
+                <p>Try asking questions like:</p>
+                <ul>
+                    <li>"What drones were seen in the last hour?"</li>
+                    <li>"Show me DJI drones above 100 meters"</li>
+                    <li>"How many unique drones today?"</li>
+                    <li>"Any FPV signals detected?"</li>
+                </ul>
+            </div>
+        </div>
+    `;
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Initialize AI chat on page load
+function initAIChat() {
+    // Generate a session ID
+    aiSessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+    // Check status periodically (every 30 seconds)
+    setInterval(() => {
+        if (aiChatOpen) {
+            checkAIStatus();
+        }
+    }, 30000);
 }

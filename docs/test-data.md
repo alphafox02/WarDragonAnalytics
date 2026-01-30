@@ -103,7 +103,7 @@ python app/test_data_generator.py --mode=sql --duration=2h30m --kits=2
 
 ## Database Schema
 
-The generator expects TimescaleDB tables as defined in `docs/ARCHITECTURE.md`:
+The generator expects TimescaleDB tables as defined in [architecture.md](architecture.md):
 
 - `kits` - Kit registry
 - `drones` (hypertable) - Drone/aircraft tracks

@@ -409,7 +409,7 @@ docker exec wardragon-timescaledb psql -U wardragon -d wardragon -c "
   VACUUM FULL;
 "
 
-# Or use data retention policies (see DEPLOYMENT.md)
+# Or use data retention policies (see deployment.md)
 ```
 
 ---
@@ -812,7 +812,7 @@ ERROR: syntax error at or near "..."
 
 **Solution:**
 - Edit panel query in Grafana
-- Compare with queries in [DASHBOARD_QUERIES.md](grafana/DASHBOARD_QUERIES.md)
+- Compare with queries in [dashboard-queries.md](dashboard-queries.md)
 - Fix SQL syntax
 
 ### Issue: Grafana login failed
@@ -867,7 +867,7 @@ docker exec wardragon-timescaledb psql -U wardragon -d wardragon -c "
 
 **Optimize database:**
 - Reduce query time ranges
-- Add missing indexes (see DEPLOYMENT.md)
+- Add missing indexes (see deployment.md)
 - Increase Docker CPU limits (docker-compose.prod.yml)
 
 **Optimize Grafana:**
@@ -1295,11 +1295,11 @@ When seeking support, provide:
 
 ### Resources
 
-- **Documentation:** [README.md](README.md), [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)
-- **Deployment:** [DEPLOYMENT.md](DEPLOYMENT.md)
-- **API Reference:** [API_REFERENCE.md](API_REFERENCE.md)
-- **Grafana Guide:** [GRAFANA_DASHBOARDS.md](GRAFANA_DASHBOARDS.md)
-- **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Documentation:** [README.md](../README.md), [operator-guide.md](operator-guide.md)
+- **Deployment:** [deployment.md](deployment.md)
+- **API Reference:** [api-reference.md](api-reference.md)
+- **Grafana Guide:** [grafana-dashboards.md](grafana-dashboards.md)
+- **Architecture:** [architecture.md](architecture.md)
 
 ---
 

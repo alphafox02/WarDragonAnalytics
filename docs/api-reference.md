@@ -6,7 +6,7 @@ Complete reference documentation for all WarDragon Analytics REST API endpoints.
 
 **Format:** JSON
 
-**Authentication:** None (add authentication in production - see [SECURITY.md](SECURITY.md))
+**Authentication:** None (add authentication in production - see [SECURITY.md](../SECURITY.md))
 
 ---
 
@@ -940,7 +940,7 @@ For production deployments:
 4. **Network isolation** - Restrict API access to trusted networks
 5. **Input validation** - All parameters are validated, but review security settings
 
-See [SECURITY.md](SECURITY.md) for complete security hardening guide.
+See [SECURITY.md](../SECURITY.md) for complete security hardening guide.
 
 ---
 
@@ -956,11 +956,11 @@ See [SECURITY.md](SECURITY.md) for complete security hardening guide.
 
 ## Support
 
-- **Documentation:** [README.md](README.md), [OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)
-- **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Testing:** [TESTING.md](TESTING.md)
-- **Deployment:** [DEPLOYMENT.md](DEPLOYMENT.md)
-- **Troubleshooting:** [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- **Documentation:** [README.md](../README.md), [operator-guide.md](operator-guide.md)
+- **Architecture:** [architecture.md](architecture.md)
+- **Testing:** [testing.md](testing.md)
+- **Deployment:** [deployment.md](deployment.md)
+- **Troubleshooting:** [troubleshooting.md](troubleshooting.md)
 
 ---
 
