@@ -215,6 +215,7 @@ docker compose down -v
 # Option 2: Apply schema to existing database (preserves data)
 docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
 docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
+docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql
 ```
 
 > **Note:** Running `./quickstart.sh` alone is safe and won't delete data. The `-v` flag on `docker compose down` is what removes database volumes.
