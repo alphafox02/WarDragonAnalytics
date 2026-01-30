@@ -220,20 +220,6 @@ docker exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaled
 
 > **Note:** Running `./quickstart.sh` alone is safe and won't delete data. The `-v` flag on `docker compose down` is what removes database volumes.
 
-**Web UI inaccessible after running quickstart.sh on existing containers:**
-
-If you run `./quickstart.sh` while containers are already running, the web UI (port 8090) may become inaccessible due to containers entering an inconsistent state.
-
-```bash
-# Stop containers first, then run quickstart
-docker compose down
-./quickstart.sh
-
-# If that doesn't work, full reset (WARNING: deletes data)
-docker compose down -v
-./quickstart.sh
-```
-
 **Containers won't start / port conflicts:**
 
 ```bash
