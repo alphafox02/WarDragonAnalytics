@@ -1229,45 +1229,69 @@ async function fetchPatterns() {
 }
 
 // Fetch and update data - with offline/error handling
+// Makes separate API calls for drones and aircraft to ensure drones are never
+// crowded out by high-volume ADS-B aircraft data
 async function fetchData() {
     try {
         showLoading(true);
 
         const { filters, showDrones, showAircraft } = getFilters();
-        const params = new URLSearchParams(filters);
 
-        let data = { drones: [] };
-        try {
-            const response = await fetch(`/api/drones?${params}`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            data = await response.json();
-        } catch (fetchError) {
-            console.warn('API fetch failed (may be offline):', fetchError.message);
-            // Don't show alert for every refresh failure, just log it
-            const lastUpdate = document.getElementById('last-update');
-            if (lastUpdate) {
-                lastUpdate.textContent = `Offline - Last update: ${new Date().toLocaleTimeString()}`;
-                lastUpdate.style.color = '#ff4444';
-            }
-            // Keep showing existing data if available
-            if (currentData.length > 0) {
-                return;
+        let allData = [];
+
+        // Fetch drones and aircraft separately with their own limits
+        // This ensures drones are never crowded out by aircraft volume
+        const fetchPromises = [];
+
+        if (showDrones) {
+            const droneParams = new URLSearchParams(filters);
+            droneParams.set('track_type', 'drone');
+            droneParams.set('limit', '2000');
+            fetchPromises.push(
+                fetch(`/api/drones?${droneParams}`)
+                    .then(r => r.ok ? r.json() : { drones: [] })
+                    .then(data => ({ type: 'drone', data }))
+                    .catch(() => ({ type: 'drone', data: { drones: [] } }))
+            );
+        }
+
+        if (showAircraft) {
+            const aircraftParams = new URLSearchParams(filters);
+            aircraftParams.set('track_type', 'aircraft');
+            aircraftParams.set('limit', '2000');
+            fetchPromises.push(
+                fetch(`/api/drones?${aircraftParams}`)
+                    .then(r => r.ok ? r.json() : { drones: [] })
+                    .then(data => ({ type: 'aircraft', data }))
+                    .catch(() => ({ type: 'aircraft', data: { drones: [] } }))
+            );
+        }
+
+        if (fetchPromises.length === 0) {
+            currentData = [];
+        } else {
+            try {
+                const results = await Promise.all(fetchPromises);
+                for (const result of results) {
+                    if (Array.isArray(result.data.drones)) {
+                        allData = allData.concat(result.data.drones);
+                    }
+                }
+            } catch (fetchError) {
+                console.warn('API fetch failed (may be offline):', fetchError.message);
+                const lastUpdate = document.getElementById('last-update');
+                if (lastUpdate) {
+                    lastUpdate.textContent = `Offline - Last update: ${new Date().toLocaleTimeString()}`;
+                    lastUpdate.style.color = '#ff4444';
+                }
+                // Keep showing existing data if available
+                if (currentData.length > 0) {
+                    return;
+                }
             }
         }
 
-        // Filter by track type - with defensive checks
-        let filteredData = Array.isArray(data.drones) ? data.drones : [];
-        if (!showDrones && !showAircraft) {
-            filteredData = [];
-        } else if (!showDrones) {
-            filteredData = filteredData.filter(d => d && d.track_type === 'aircraft');
-        } else if (!showAircraft) {
-            filteredData = filteredData.filter(d => d && d.track_type !== 'aircraft');
-        }
-
-        currentData = filteredData;
+        currentData = allData;
 
         // Fetch pattern data (don't fail if this errors)
         try {
