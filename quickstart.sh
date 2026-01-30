@@ -132,6 +132,12 @@ if ! $DOCKER_CMD exec wardragon-timescaledb psql -U wardragon -d wardragon -c "S
     echo -e "${GREEN}[OK] Database schema applied${NC}"
 else
     echo -e "${GREEN}[OK] Database schema verified${NC}"
+    # Apply extended fields migration for existing databases (safe to run multiple times)
+    if [ -f "timescaledb/03-extended-fields.sql" ]; then
+        echo "Applying extended fields migration..."
+        $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql 2>/dev/null || true
+        echo -e "${GREEN}[OK] Extended fields verified${NC}"
+    fi
 fi
 echo ""
 

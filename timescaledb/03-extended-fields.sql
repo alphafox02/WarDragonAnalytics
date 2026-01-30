@@ -1,6 +1,11 @@
--- WarDragon Analytics - Phase 1 Schema Migration
--- Adds additional fields available from DragonSync API
+-- WarDragon Analytics - Extended Fields Migration
+-- Adds extended telemetry fields available from DragonSync API
+--
+-- This migration is for EXISTING databases only.
+-- Fresh installs already have these fields in 01-init.sql.
+--
 -- Safe to run multiple times (uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS)
+-- Run via: ./scripts/apply-schema.sh or quickstart.sh
 
 -- =============================================================================
 -- DRONES TABLE: Additional fields from DragonSync API
@@ -107,7 +112,7 @@ WHERE pal_conf IS NOT NULL OR ntsc_conf IS NOT NULL;
 -- VERIFICATION
 -- =============================================================================
 
-\echo 'Phase 1 migration complete. New columns added:'
+\echo 'Extended fields migration complete. New columns added:'
 \echo '  drones: vspeed, height, direction, op_status, runtime, id_type'
 \echo '  system_health: pluto_temp, zynq_temp, speed, track, gps_fix'
 \echo '  signals: pal_conf, ntsc_conf, source, signal_type'
