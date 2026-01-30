@@ -93,6 +93,14 @@ CREATE TABLE drones (
     -- Drone motion data
     speed DOUBLE PRECISION,    -- Ground speed in m/s
     heading DOUBLE PRECISION,  -- Heading in degrees (0-359)
+    vspeed DOUBLE PRECISION,   -- Vertical speed in m/s (positive=climbing)
+    height DOUBLE PRECISION,   -- Height above ground level (AGL) in meters
+    direction DOUBLE PRECISION, -- Direction from Remote ID broadcast in degrees
+
+    -- Operational metadata
+    op_status TEXT,            -- Operational status (ground, airborne, emergency)
+    runtime INTEGER,           -- Flight runtime in seconds
+    id_type TEXT,              -- Detection method: ble, wifi, dji
 
     -- Pilot location (Remote ID only, null for ADS-B)
     pilot_lat DOUBLE PRECISION,
@@ -189,6 +197,14 @@ CREATE TABLE signals (
     -- Detection type discriminator
     detection_type TEXT CHECK (detection_type IN ('analog', 'dji')),
 
+    -- FPV video standard confidence scores (0.0-1.0)
+    pal_conf DOUBLE PRECISION,
+    ntsc_conf DOUBLE PRECISION,
+
+    -- Detection metadata
+    source TEXT,               -- Detection source: guard (energy), confirm (fpvdet)
+    signal_type TEXT,          -- Signal type: fpv, dji, etc.
+
     -- Composite primary key: time + kit_id + freq_mhz
     -- Allows multiple kits to detect same frequency at same time
     PRIMARY KEY (time, kit_id, freq_mhz)
@@ -253,6 +269,15 @@ CREATE TABLE system_health (
     -- Temperature sensors in Celsius
     temp_cpu DOUBLE PRECISION,
     temp_gpu DOUBLE PRECISION,
+
+    -- SDR temperatures (Pluto SDR / AntSDR)
+    pluto_temp DOUBLE PRECISION,
+    zynq_temp DOUBLE PRECISION,
+
+    -- Kit GPS movement data
+    speed DOUBLE PRECISION,    -- Kit GPS ground speed in m/s
+    track DOUBLE PRECISION,    -- Kit GPS heading in degrees (0-359)
+    gps_fix BOOLEAN,           -- Whether kit has valid GPS fix
 
     -- Composite primary key: time + kit_id
     PRIMARY KEY (time, kit_id)

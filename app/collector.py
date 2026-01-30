@@ -180,11 +180,13 @@ class DatabaseWriter:
                         query = text("""
                             INSERT INTO drones (
                                 time, kit_id, drone_id, lat, lon, alt, speed, heading,
+                                vspeed, height, direction, op_status, runtime, id_type,
                                 pilot_lat, pilot_lon, home_lat, home_lon,
                                 mac, rssi, freq, ua_type, operator_id, caa_id,
                                 rid_make, rid_model, rid_source, track_type
                             ) VALUES (
                                 :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
+                                :vspeed, :height, :direction, :op_status, :runtime, :id_type,
                                 :pilot_lat, :pilot_lon, :home_lat, :home_lon,
                                 :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
                                 :rid_make, :rid_model, :rid_source, :track_type
@@ -194,7 +196,9 @@ class DatabaseWriter:
                                 lon = EXCLUDED.lon,
                                 alt = EXCLUDED.alt,
                                 speed = EXCLUDED.speed,
-                                heading = EXCLUDED.heading
+                                heading = EXCLUDED.heading,
+                                vspeed = EXCLUDED.vspeed,
+                                height = EXCLUDED.height
                         """)
 
                         # Normalize timestamp
@@ -214,7 +218,14 @@ class DatabaseWriter:
                             'lon': self._safe_float(drone.get('lon')),
                             'alt': self._safe_float(drone.get('alt') or drone.get('altitude')),
                             'speed': self._safe_float(drone.get('speed')),
-                            'heading': self._safe_float(drone.get('heading')),
+                            'heading': self._safe_float(drone.get('heading') or drone.get('direction')),
+                            # Phase 1: New drone fields from DragonSync API
+                            'vspeed': self._safe_float(drone.get('vspeed')),
+                            'height': self._safe_float(drone.get('height')),
+                            'direction': self._safe_float(drone.get('direction')),
+                            'op_status': drone.get('op_status'),
+                            'runtime': self._safe_int(drone.get('runtime')),
+                            'id_type': drone.get('id_type'),
                             'pilot_lat': self._safe_float(drone.get('pilot_lat')),
                             'pilot_lon': self._safe_float(drone.get('pilot_lon')),
                             'home_lat': self._safe_float(drone.get('home_lat')),
@@ -257,13 +268,17 @@ class DatabaseWriter:
                         query = text("""
                             INSERT INTO signals (
                                 time, kit_id, freq_mhz, power_dbm, bandwidth_mhz,
-                                lat, lon, alt, detection_type
+                                lat, lon, alt, detection_type,
+                                pal_conf, ntsc_conf, source, signal_type
                             ) VALUES (
                                 :time, :kit_id, :freq_mhz, :power_dbm, :bandwidth_mhz,
-                                :lat, :lon, :alt, :detection_type
+                                :lat, :lon, :alt, :detection_type,
+                                :pal_conf, :ntsc_conf, :source, :signal_type
                             )
                             ON CONFLICT (time, kit_id, freq_mhz) DO UPDATE SET
-                                power_dbm = EXCLUDED.power_dbm
+                                power_dbm = EXCLUDED.power_dbm,
+                                pal_conf = EXCLUDED.pal_conf,
+                                ntsc_conf = EXCLUDED.ntsc_conf
                         """)
 
                         timestamp = self._parse_timestamp(signal.get('timestamp'))
@@ -279,11 +294,16 @@ class DatabaseWriter:
                             'kit_id': kit_id,
                             'freq_mhz': freq,
                             'power_dbm': self._safe_float(signal.get('power_dbm') or signal.get('power')),
-                            'bandwidth_mhz': self._safe_float(signal.get('bandwidth_mhz') or signal.get('bandwidth')),
-                            'lat': self._safe_float(signal.get('lat')),
-                            'lon': self._safe_float(signal.get('lon')),
-                            'alt': self._safe_float(signal.get('alt')),
-                            'detection_type': detection_type
+                            'bandwidth_mhz': self._safe_float(signal.get('bandwidth_mhz') or signal.get('bandwidth') or signal.get('bandwidth_hz', 0) / 1e6),
+                            'lat': self._safe_float(signal.get('lat') or signal.get('sensor_lat')),
+                            'lon': self._safe_float(signal.get('lon') or signal.get('sensor_lon')),
+                            'alt': self._safe_float(signal.get('alt') or signal.get('sensor_alt')),
+                            'detection_type': detection_type,
+                            # Phase 1: New signal fields from DragonSync API
+                            'pal_conf': self._safe_float(signal.get('pal_conf')),
+                            'ntsc_conf': self._safe_float(signal.get('ntsc_conf')),
+                            'source': signal.get('source'),  # guard, confirm
+                            'signal_type': signal.get('signal_type')  # fpv
                         })
                         conn.commit()
                         inserted += 1
@@ -307,41 +327,66 @@ class DatabaseWriter:
                     INSERT INTO system_health (
                         time, kit_id, lat, lon, alt,
                         cpu_percent, memory_percent, disk_percent,
-                        uptime_hours, temp_cpu, temp_gpu
+                        uptime_hours, temp_cpu, temp_gpu,
+                        pluto_temp, zynq_temp, speed, track, gps_fix
                     ) VALUES (
                         :time, :kit_id, :lat, :lon, :alt,
                         :cpu_percent, :memory_percent, :disk_percent,
-                        :uptime_hours, :temp_cpu, :temp_gpu
+                        :uptime_hours, :temp_cpu, :temp_gpu,
+                        :pluto_temp, :zynq_temp, :speed, :track, :gps_fix
                     )
                     ON CONFLICT (time, kit_id) DO UPDATE SET
                         cpu_percent = EXCLUDED.cpu_percent,
                         memory_percent = EXCLUDED.memory_percent,
-                        disk_percent = EXCLUDED.disk_percent
+                        disk_percent = EXCLUDED.disk_percent,
+                        pluto_temp = EXCLUDED.pluto_temp,
+                        zynq_temp = EXCLUDED.zynq_temp
                 """)
 
-                timestamp = self._parse_timestamp(status.get('timestamp'))
+                timestamp = self._parse_timestamp(status.get('timestamp') or status.get('last_update_time'))
 
-                # Extract GPS data
+                # Handle both nested format (legacy) and flat format (DragonSync API)
                 gps = status.get('gps', {})
-
-                # Extract system metrics
                 cpu = status.get('cpu', {})
                 memory = status.get('memory', {})
                 disk = status.get('disk', {})
                 temps = status.get('temps', {})
 
+                # Calculate memory/disk percentages from totals if not provided directly
+                mem_percent = self._safe_float(memory.get('percent') or status.get('memory_percent'))
+                if mem_percent is None and status.get('memory_total') and status.get('memory_available'):
+                    total = self._safe_float(status.get('memory_total'))
+                    avail = self._safe_float(status.get('memory_available'))
+                    if total and total > 0:
+                        mem_percent = ((total - avail) / total) * 100
+
+                disk_percent = self._safe_float(disk.get('percent') or status.get('disk_percent'))
+                if disk_percent is None and status.get('disk_total') and status.get('disk_used'):
+                    total = self._safe_float(status.get('disk_total'))
+                    used = self._safe_float(status.get('disk_used'))
+                    if total and total > 0:
+                        disk_percent = (used / total) * 100
+
                 conn.execute(query, {
                     'time': timestamp,
                     'kit_id': kit_id,
-                    'lat': self._safe_float(gps.get('lat')),
-                    'lon': self._safe_float(gps.get('lon')),
-                    'alt': self._safe_float(gps.get('alt')),
-                    'cpu_percent': self._safe_float(cpu.get('percent')),
-                    'memory_percent': self._safe_float(memory.get('percent')),
-                    'disk_percent': self._safe_float(disk.get('percent')),
-                    'uptime_hours': self._safe_float(status.get('uptime_hours')),
-                    'temp_cpu': self._safe_float(temps.get('cpu')),
-                    'temp_gpu': self._safe_float(temps.get('gpu'))
+                    # GPS - handle both nested and flat format
+                    'lat': self._safe_float(gps.get('lat') or status.get('lat')),
+                    'lon': self._safe_float(gps.get('lon') or status.get('lon')),
+                    'alt': self._safe_float(gps.get('alt') or status.get('alt')),
+                    # CPU - handle both nested and flat format
+                    'cpu_percent': self._safe_float(cpu.get('percent') or status.get('cpu_usage') or status.get('cpu_percent')),
+                    'memory_percent': mem_percent,
+                    'disk_percent': disk_percent,
+                    'uptime_hours': self._safe_float(status.get('uptime_hours') or (status.get('uptime', 0) / 3600 if status.get('uptime') else None)),
+                    'temp_cpu': self._safe_float(temps.get('cpu') or status.get('temperature') or status.get('temp_cpu')),
+                    'temp_gpu': self._safe_float(temps.get('gpu') or status.get('temp_gpu')),
+                    # Phase 1: New system_health fields from DragonSync API
+                    'pluto_temp': self._safe_float(status.get('pluto_temp')),
+                    'zynq_temp': self._safe_float(status.get('zynq_temp')),
+                    'speed': self._safe_float(status.get('speed')),
+                    'track': self._safe_float(status.get('track')),
+                    'gps_fix': status.get('gps_fix')
                 })
                 conn.commit()
 
