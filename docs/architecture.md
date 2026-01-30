@@ -96,8 +96,9 @@ CREATE TABLE kits (
     location TEXT,
     api_url TEXT NOT NULL,
     last_seen TIMESTAMPTZ,
-    status TEXT,  -- online, offline, error
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    status TEXT CHECK (status IN ('online', 'offline', 'error')),
+    enabled BOOLEAN DEFAULT TRUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 ```
 
@@ -112,6 +113,12 @@ CREATE TABLE drones (
     alt DOUBLE PRECISION,
     speed DOUBLE PRECISION,
     heading DOUBLE PRECISION,
+    vspeed DOUBLE PRECISION,     -- Vertical speed (m/s)
+    height DOUBLE PRECISION,     -- Height AGL (meters)
+    direction DOUBLE PRECISION,  -- Direction from RID broadcast
+    op_status TEXT,              -- Operational status
+    runtime INTEGER,             -- Flight runtime (seconds)
+    id_type TEXT,                -- Detection method: ble, wifi, dji
     pilot_lat DOUBLE PRECISION,
     pilot_lon DOUBLE PRECISION,
     home_lat DOUBLE PRECISION,
@@ -125,7 +132,7 @@ CREATE TABLE drones (
     rid_make TEXT,
     rid_model TEXT,
     rid_source TEXT,
-    track_type TEXT,  -- drone, aircraft
+    track_type TEXT CHECK (track_type IN ('drone', 'aircraft')),
     PRIMARY KEY (time, kit_id, drone_id)
 );
 
@@ -143,7 +150,11 @@ CREATE TABLE signals (
     lat DOUBLE PRECISION,
     lon DOUBLE PRECISION,
     alt DOUBLE PRECISION,
-    detection_type TEXT,  -- analog, dji
+    detection_type TEXT CHECK (detection_type IN ('analog', 'dji')),
+    pal_conf DOUBLE PRECISION,   -- PAL confidence (0.0-1.0)
+    ntsc_conf DOUBLE PRECISION,  -- NTSC confidence (0.0-1.0)
+    source TEXT,                 -- Detection source: guard, confirm
+    signal_type TEXT,            -- Signal type: fpv, dji
     PRIMARY KEY (time, kit_id, freq_mhz)
 );
 
@@ -158,12 +169,17 @@ CREATE TABLE system_health (
     lat DOUBLE PRECISION,
     lon DOUBLE PRECISION,
     alt DOUBLE PRECISION,
-    cpu_percent DOUBLE PRECISION,
-    memory_percent DOUBLE PRECISION,
-    disk_percent DOUBLE PRECISION,
-    uptime_hours DOUBLE PRECISION,
+    cpu_percent DOUBLE PRECISION CHECK (cpu_percent >= 0 AND cpu_percent <= 100),
+    memory_percent DOUBLE PRECISION CHECK (memory_percent >= 0 AND memory_percent <= 100),
+    disk_percent DOUBLE PRECISION CHECK (disk_percent >= 0 AND disk_percent <= 100),
+    uptime_hours DOUBLE PRECISION CHECK (uptime_hours >= 0),
     temp_cpu DOUBLE PRECISION,
     temp_gpu DOUBLE PRECISION,
+    pluto_temp DOUBLE PRECISION,  -- Pluto SDR temperature
+    zynq_temp DOUBLE PRECISION,   -- Zynq temperature
+    speed DOUBLE PRECISION,       -- Kit GPS ground speed (m/s)
+    track DOUBLE PRECISION,       -- Kit GPS heading (degrees)
+    gps_fix BOOLEAN,              -- GPS fix status
     PRIMARY KEY (time, kit_id)
 );
 
@@ -246,11 +262,15 @@ async def poll_kit(kit: Kit):
 ```
 GET  /                        -> Main map UI
 GET  /api/kits                -> List configured kits
-POST /api/kits                -> Add new kit
+POST /api/admin/kits          -> Add new kit
+PUT  /api/admin/kits/{id}     -> Update kit
+DELETE /api/admin/kits/{id}   -> Delete kit
 GET  /api/drones              -> Query drones (filters: time, kit, etc.)
+GET  /api/drones/{id}/track   -> Get drone track history
 GET  /api/signals             -> Query signals
 GET  /api/export/csv          -> Export CSV
-GET  /api/export/kml          -> Export KML for Google Earth
+GET  /api/patterns/*          -> Pattern detection endpoints
+GET  /api/llm/*               -> AI Assistant endpoints
 ```
 
 ### 3. Grafana Dashboards
@@ -358,28 +378,28 @@ kits:
 
 ## Features Roadmap
 
-### Phase 1: MVP (Core Functionality)
+### Phase 1: MVP (Core Functionality) - Complete
 - [x] Architecture design
-- [ ] TimescaleDB schema
-- [ ] Basic collector (polls /drones, /status)
-- [ ] Simple web UI (map + table)
-- [ ] Docker Compose deployment
-- [ ] Single-kit support
+- [x] TimescaleDB schema
+- [x] Basic collector (polls /drones, /status)
+- [x] Simple web UI (map + table)
+- [x] Docker Compose deployment
+- [x] Single-kit support
 
-### Phase 2: Multi-Kit Aggregation
-- [ ] Kit management UI
-- [ ] Health monitoring
-- [ ] Offline kit detection
-- [ ] Basic Grafana dashboards
-- [ ] CSV export
+### Phase 2: Multi-Kit Aggregation - Complete
+- [x] Kit management UI
+- [x] Health monitoring
+- [x] Offline kit detection
+- [x] Basic Grafana dashboards
+- [x] CSV export
 
-### Phase 3: Advanced Analytics
-- [ ] Signal collection (/signals endpoint)
-- [ ] Geofencing alerts
-- [ ] RID watchlist
-- [ ] KML export (Google Earth)
-- [ ] Continuous aggregates (hourly/daily rollups)
-- [ ] Data retention policies
+### Phase 3: Advanced Analytics - Complete
+- [x] Signal collection (/signals endpoint)
+- [x] Pattern detection (repeated drones, coordinated activity)
+- [x] Security alerts (loitering, rapid descent, night activity)
+- [x] Continuous aggregates (hourly rollups)
+- [x] Data retention policies
+- [x] AI Assistant (natural language queries via Ollama)
 
 ### Phase 4: Production Features
 - [ ] Authentication (user accounts)
@@ -388,6 +408,7 @@ kits:
 - [ ] Encrypted kit-to-analytics communication
 - [ ] Alert webhooks (Slack, email, PagerDuty)
 - [ ] Mobile-responsive UI
+- [ ] KML export (Google Earth)
 
 ---
 

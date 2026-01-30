@@ -14,6 +14,9 @@ WarDragon Analytics aggregates DroneID/Remote ID drone detections, ADS-B aircraf
 - **Pre-built Grafana dashboards** for tactical operations and analysis
 - **REST API** for integration with other systems
 - **CSV export** for reporting (KML planned)
+- **AI Assistant** for natural language queries (optional, requires Ollama)
+
+![WarDragon Analytics Web UI](docs/images/webui-screenshot.jpg)
 
 ## Architecture
 

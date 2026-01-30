@@ -13,18 +13,35 @@ Complete reference documentation for all WarDragon Analytics REST API endpoints.
 ## Table of Contents
 
 - [Overview](#overview)
-- [Core Endpoints (Phase 1)](#core-endpoints-phase-1)
+- [Core Endpoints](#core-endpoints)
   - [Health Check](#health-check)
   - [Kit Management](#kit-management)
   - [Drone Tracks](#drone-tracks)
+  - [Drone Track History](#drone-track-history)
   - [Signal Detections](#signal-detections)
   - [CSV Export](#csv-export)
-- [Pattern Detection Endpoints (Phase 2)](#pattern-detection-endpoints-phase-2)
+- [Kit Admin Endpoints](#kit-admin-endpoints)
+  - [Create Kit](#create-kit)
+  - [Update Kit](#update-kit)
+  - [Delete Kit](#delete-kit)
+  - [Test Kit Connection](#test-kit-connection)
+  - [Reload Status](#reload-status)
+- [Pattern Detection Endpoints](#pattern-detection-endpoints)
   - [Repeated Drones](#repeated-drones)
   - [Coordinated Activity](#coordinated-activity)
   - [Pilot Reuse](#pilot-reuse)
   - [Anomalies](#anomalies)
   - [Multi-Kit Detections](#multi-kit-detections)
+- [Security Pattern Endpoints](#security-pattern-endpoints)
+  - [Security Alerts](#security-alerts)
+  - [Loitering Detection](#loitering-detection)
+  - [Rapid Descent Detection](#rapid-descent-detection)
+  - [Night Activity](#night-activity)
+- [AI Assistant Endpoints](#ai-assistant-endpoints)
+  - [LLM Status](#llm-status)
+  - [Natural Language Query](#natural-language-query)
+  - [Query Examples](#query-examples)
+  - [Clear Session](#clear-session)
 - [Error Codes](#error-codes)
 - [Data Models](#data-models)
 - [Integration Examples](#integration-examples)
@@ -47,7 +64,7 @@ WarDragon Analytics provides a REST API for querying drone surveillance data agg
 
 ---
 
-## Core Endpoints (Phase 1)
+## Core Endpoints
 
 ### Health Check
 
@@ -147,6 +164,7 @@ Query drone and aircraft detections with time-based and attribute filters.
 | `rid_make` | string | No | - | Filter by manufacturer (e.g., `DJI`, `Autel`) |
 | `track_type` | string | No | - | Filter by type: `drone` or `aircraft` |
 | `limit` | integer | No | `1000` | Maximum results (max 10,000) |
+| `deduplicate` | boolean | No | `true` | Return only latest detection per drone_id |
 
 **Time Range Formats:**
 - `1h` - Last 1 hour
@@ -184,7 +202,11 @@ Query drone and aircraft detections with time-based and attribute filters.
     }
   ],
   "count": 1,
-  "time_range": "1h"
+  "total_detections": 15,
+  "time_range": {
+    "start": "2026-01-20T14:30:00Z",
+    "end": "2026-01-20T15:30:00Z"
+  }
 }
 ```
 
@@ -212,6 +234,79 @@ curl "http://localhost:8090/api/drones?time_range=custom:2026-01-20T10:00:00,202
 
 ---
 
+### Drone Track History
+
+Get the flight path history for a specific drone.
+
+**Endpoint:** `GET /api/drones/{drone_id}/track`
+
+**Use Case:** Draw flight path polylines on a map, analyze movement patterns
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `drone_id` | string | The drone's unique identifier |
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `time_range` | string | No | `1h` | Time range: `1h`, `24h`, `7d`, or `custom:START,END` |
+| `limit` | integer | No | `500` | Maximum track points (max 2,000) |
+
+**Response:**
+```json
+{
+  "drone_id": "DJI-1234567890ABCDEF",
+  "track": [
+    {
+      "time": "2026-01-20T15:00:00Z",
+      "kit_id": "kit-alpha",
+      "lat": 37.7749,
+      "lon": -122.4194,
+      "alt": 50.0,
+      "speed": 5.2,
+      "heading": 90.0,
+      "rssi": -65
+    },
+    {
+      "time": "2026-01-20T15:05:00Z",
+      "kit_id": "kit-alpha",
+      "lat": 37.7755,
+      "lon": -122.4180,
+      "alt": 75.0,
+      "speed": 12.5,
+      "heading": 45.0,
+      "rssi": -62
+    }
+  ],
+  "point_count": 2,
+  "time_range": {
+    "start": "2026-01-20T14:30:00Z",
+    "end": "2026-01-20T15:30:00Z"
+  }
+}
+```
+
+**Status Codes:**
+- `200 OK` - Success
+- `500 Internal Server Error` - Database error
+
+**Example:**
+```bash
+# Get track for last hour
+curl "http://localhost:8090/api/drones/DJI-1234567890ABCDEF/track"
+
+# Get track for last 24 hours
+curl "http://localhost:8090/api/drones/DJI-1234567890ABCDEF/track?time_range=24h"
+
+# Get track with more points
+curl "http://localhost:8090/api/drones/DJI-1234567890ABCDEF/track?limit=1000"
+```
+
+---
+
 ### Signal Detections
 
 Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
@@ -226,9 +321,7 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
 |-----------|------|----------|---------|-------------|
 | `time_range` | string | No | `1h` | Time range: `1h`, `24h`, `7d`, or `custom:START,END` |
 | `kit_id` | string | No | - | Filter by kit ID (comma-separated) |
-| `detection_type` | string | No | - | Filter by type: `analog_fpv`, `dji_fpv`, etc. |
-| `min_freq_mhz` | float | No | - | Minimum frequency (MHz) |
-| `max_freq_mhz` | float | No | - | Maximum frequency (MHz) |
+| `detection_type` | string | No | - | Filter by type: `analog` or `dji` |
 | `limit` | integer | No | `1000` | Maximum results (max 10,000) |
 
 **Response:**
@@ -253,11 +346,8 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
 ```
 
 **Detection Types:**
-- `analog_fpv` - 5.8GHz analog FPV video
-- `dji_fpv` - DJI digital FPV (OcuSync)
-- `rc_control` - RC control signals
-- `wifi` - WiFi signals
-- `unknown` - Unidentified RF signals
+- `analog` - 5.8GHz analog FPV video
+- `dji` - DJI digital FPV (OcuSync)
 
 **Status Codes:**
 - `200 OK` - Success
@@ -268,11 +358,11 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
 # All signals, last hour
 curl http://localhost:8090/api/signals
 
-# 5.8GHz FPV signals only
-curl "http://localhost:8090/api/signals?min_freq_mhz=5600&max_freq_mhz=6000"
-
 # Analog FPV detections, last 24 hours
-curl "http://localhost:8090/api/signals?time_range=24h&detection_type=analog_fpv"
+curl "http://localhost:8090/api/signals?time_range=24h&detection_type=analog"
+
+# DJI signals from specific kit
+curl "http://localhost:8090/api/signals?detection_type=dji&kit_id=kit-alpha"
 ```
 
 ---
@@ -318,7 +408,191 @@ curl -o dji_drones.csv "http://localhost:8090/api/export/csv?rid_make=DJI"
 
 ---
 
-## Pattern Detection Endpoints (Phase 2)
+## Kit Admin Endpoints
+
+Administrative endpoints for managing WarDragon kit configurations.
+
+### Create Kit
+
+Add a new kit to the system.
+
+**Endpoint:** `POST /api/admin/kits`
+
+**Use Case:** Register a new WarDragon kit for polling
+
+**Request Body:**
+```json
+{
+  "api_url": "http://192.168.1.100:8088",
+  "name": "Field Kit Alpha",
+  "location": "Building A - Rooftop",
+  "enabled": true
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `api_url` | string | Yes | Base URL for DragonSync API |
+| `name` | string | No | Human-readable kit name |
+| `location` | string | No | Physical location description |
+| `enabled` | boolean | No | Whether to poll this kit (default: true) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "kit_id": "kit-192-168-1-100",
+  "message": "Kit created successfully. Connection test passed.",
+  "connection_test": {
+    "success": true,
+    "kit_id": "wardragon-abc123",
+    "message": "Successfully connected to kit",
+    "response_time_ms": 45.2
+  }
+}
+```
+
+**Status Codes:**
+- `200 OK` - Kit created successfully
+- `409 Conflict` - Kit already exists
+- `503 Service Unavailable` - Database unavailable
+
+---
+
+### Update Kit
+
+Update an existing kit's configuration.
+
+**Endpoint:** `PUT /api/admin/kits/{kit_id}`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `kit_id` | string | The kit's unique identifier |
+
+**Request Body:**
+```json
+{
+  "name": "Updated Kit Name",
+  "location": "New Location",
+  "enabled": false
+}
+```
+
+All fields are optional. Only provided fields will be updated.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Kit updated successfully",
+  "kit_id": "kit-alpha"
+}
+```
+
+**Status Codes:**
+- `200 OK` - Kit updated
+- `404 Not Found` - Kit not found
+- `503 Service Unavailable` - Database unavailable
+
+---
+
+### Delete Kit
+
+Remove a kit from the system.
+
+**Endpoint:** `DELETE /api/admin/kits/{kit_id}`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `kit_id` | string | The kit's unique identifier |
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `delete_data` | boolean | `false` | Also delete all drone/signal data from this kit |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Kit kit-alpha deleted successfully",
+  "kit_id": "kit-alpha",
+  "deleted_data": {
+    "drones": 1523,
+    "signals": 456,
+    "health_records": 2890
+  }
+}
+```
+
+**Status Codes:**
+- `200 OK` - Kit deleted
+- `404 Not Found` - Kit not found
+- `503 Service Unavailable` - Database unavailable
+
+---
+
+### Test Kit Connection
+
+Test connectivity to a kit's API without adding it.
+
+**Endpoint:** `POST /api/admin/kits/test`
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `api_url` | string | Yes | API URL to test |
+
+**Response:**
+```json
+{
+  "success": true,
+  "kit_id": "wardragon-abc123",
+  "message": "Successfully connected to kit",
+  "response_time_ms": 45.2
+}
+```
+
+**Test Existing Kit:** `POST /api/admin/kits/{kit_id}/test`
+
+Tests an existing kit's connectivity using its stored URL.
+
+---
+
+### Reload Status
+
+Check kit configuration and polling status.
+
+**Endpoint:** `GET /api/admin/kits/reload-status`
+
+**Response:**
+```json
+{
+  "total_kits": 3,
+  "enabled_kits": 2,
+  "online_kits": 2,
+  "kits": [
+    {
+      "kit_id": "kit-alpha",
+      "name": "Alpha Kit",
+      "api_url": "http://192.168.1.100:8088",
+      "status": "online",
+      "enabled": true,
+      "last_seen": "2026-01-20T15:30:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## Pattern Detection Endpoints
 
 Advanced intelligence endpoints for tactical operations and threat detection.
 
@@ -482,26 +756,25 @@ Detect operators flying multiple different drones (operator tracking, persistent
 **Response:**
 ```json
 {
-  "pilot_reuse_patterns": [
+  "pilot_reuse": [
     {
       "pilot_identifier": "OP12345678",
       "correlation_method": "operator_id",
       "drones": [
         {
           "drone_id": "DJI-DRONE1",
-          "rid_make": "DJI",
-          "rid_model": "Mavic 3",
-          "first_seen": "2026-01-20T10:00:00Z",
-          "last_seen": "2026-01-20T12:00:00Z"
+          "timestamp": "2026-01-20T12:00:00Z",
+          "pilot_lat": 37.7750,
+          "pilot_lon": -122.4190
         },
         {
           "drone_id": "DJI-DRONE2",
-          "rid_make": "DJI",
-          "rid_model": "Mini 3 Pro",
-          "first_seen": "2026-01-20T13:00:00Z",
-          "last_seen": "2026-01-20T15:00:00Z"
+          "timestamp": "2026-01-20T15:00:00Z",
+          "pilot_lat": 37.7751,
+          "pilot_lon": -122.4191
         }
-      ]
+      ],
+      "drone_count": 2
     }
   ],
   "count": 1,
@@ -701,6 +974,344 @@ curl "http://localhost:8090/api/patterns/multi-kit?time_window_minutes=30"
 
 # Last hour
 curl "http://localhost:8090/api/patterns/multi-kit?time_window_minutes=60"
+```
+
+---
+
+## Security Pattern Endpoints
+
+Specialized endpoints for security monitoring and threat detection.
+
+### Security Alerts
+
+Get consolidated security alerts with threat scoring.
+
+**Endpoint:** `GET /api/patterns/security-alerts`
+
+**Use Case:** Prison perimeter monitoring, critical infrastructure protection, neighborhood surveillance
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `time_window_hours` | integer | No | `4` | Time window (1-24 hours) |
+
+**Response:**
+```json
+{
+  "alerts": [
+    {
+      "time": "2026-01-20T15:30:00Z",
+      "drone_id": "DJI-SUSPECT1",
+      "threat_score": 85,
+      "threat_level": "high",
+      "indicators": ["rapid_descent", "night_activity", "loitering"]
+    }
+  ],
+  "count": 5,
+  "time_window_hours": 4,
+  "threat_summary": {
+    "critical": 1,
+    "high": 2,
+    "medium": 1,
+    "low": 1
+  }
+}
+```
+
+**Threat Levels:**
+- `critical` - Immediate attention required (score ≥ 80)
+- `high` - Significant concern (score 60-79)
+- `medium` - Moderate concern (score 40-59)
+- `low` - Minor concern (score < 40)
+
+---
+
+### Loitering Detection
+
+Detect drones hovering in a specific geographic area.
+
+**Endpoint:** `GET /api/patterns/loitering`
+
+**Use Case:** Monitor secure facilities, detect surveillance attempts
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `lat` | float | Yes | - | Center latitude of area |
+| `lon` | float | Yes | - | Center longitude of area |
+| `radius_m` | float | No | `500` | Monitoring radius (50-5000m) |
+| `min_duration_minutes` | integer | No | `5` | Minimum time in area (1-120 min) |
+| `time_window_hours` | integer | No | `24` | Time window (1-168 hours) |
+
+**Response:**
+```json
+{
+  "loitering_drones": [
+    {
+      "drone_id": "DJI-LOITER1",
+      "duration_minutes": 12,
+      "entry_time": "2026-01-20T14:00:00Z",
+      "exit_time": "2026-01-20T14:12:00Z",
+      "avg_distance_m": 150.5
+    }
+  ],
+  "count": 1,
+  "search_area": {
+    "center_lat": 37.7749,
+    "center_lon": -122.4194,
+    "radius_m": 500
+  },
+  "parameters": {
+    "min_duration_minutes": 5,
+    "time_window_hours": 24
+  }
+}
+```
+
+**Example:**
+```bash
+# Monitor 500m radius around coordinates
+curl "http://localhost:8090/api/patterns/loitering?lat=37.7749&lon=-122.4194"
+
+# Tighter radius, longer minimum loiter time
+curl "http://localhost:8090/api/patterns/loitering?lat=37.7749&lon=-122.4194&radius_m=200&min_duration_minutes=10"
+```
+
+---
+
+### Rapid Descent Detection
+
+Detect rapid altitude descents that may indicate payload drops.
+
+**Endpoint:** `GET /api/patterns/rapid-descent`
+
+**Use Case:** Contraband delivery detection, cargo drop monitoring
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `time_window_minutes` | integer | No | `60` | Time window (5-1440 min) |
+| `min_descent_rate_mps` | float | No | `5.0` | Minimum descent rate (1-50 m/s) |
+| `min_descent_m` | float | No | `30.0` | Minimum total descent (10-500m) |
+
+**Response:**
+```json
+{
+  "descent_events": [
+    {
+      "drone_id": "DJI-DROP1",
+      "start_time": "2026-01-20T15:20:00Z",
+      "end_time": "2026-01-20T15:20:30Z",
+      "start_alt": 100.0,
+      "end_alt": 30.0,
+      "descent_m": 70.0,
+      "descent_rate_mps": 12.5,
+      "horizontal_speed_mps": 2.1,
+      "possible_payload_drop": true,
+      "lat": 37.7749,
+      "lon": -122.4194
+    }
+  ],
+  "count": 1,
+  "possible_payload_drops": 1,
+  "parameters": {
+    "time_window_minutes": 60,
+    "min_descent_rate_mps": 5.0,
+    "min_descent_m": 30.0
+  }
+}
+```
+
+**Note:** Events with low horizontal speed during descent are flagged as `possible_payload_drop: true`.
+
+---
+
+### Night Activity
+
+Detect drone activity during night hours.
+
+**Endpoint:** `GET /api/patterns/night-activity`
+
+**Use Case:** Unauthorized night flights, contraband delivery detection
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `time_window_hours` | integer | No | `24` | Time window (1-168 hours) |
+| `night_start_hour` | integer | No | `22` | Hour when night begins (0-23) |
+| `night_end_hour` | integer | No | `5` | Hour when night ends (0-23) |
+
+**Response:**
+```json
+{
+  "night_activity": [
+    {
+      "drone_id": "DJI-NIGHT1",
+      "first_seen": "2026-01-20T02:15:00Z",
+      "last_seen": "2026-01-20T02:45:00Z",
+      "detection_count": 12,
+      "risk_level": "high",
+      "avg_altitude": 50.0,
+      "kit_id": "kit-alpha"
+    }
+  ],
+  "count": 1,
+  "risk_summary": {
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "low": 0
+  },
+  "parameters": {
+    "time_window_hours": 24,
+    "night_start_hour": 22,
+    "night_end_hour": 5
+  }
+}
+```
+
+---
+
+## AI Assistant Endpoints
+
+Natural language query interface powered by Ollama LLM.
+
+> **Note:** These endpoints require Ollama to be installed and running. See [ollama-setup.md](ollama-setup.md) for configuration.
+
+### LLM Status
+
+Check if the LLM service is available.
+
+**Endpoint:** `GET /api/llm/status`
+
+**Response:**
+```json
+{
+  "available": true,
+  "message": null,
+  "ollama_url": "http://localhost:11434",
+  "model": "llama3.1:8b",
+  "available_models": ["llama3.1:8b", "mistral:7b"]
+}
+```
+
+**When unavailable:**
+```json
+{
+  "available": false,
+  "message": "Model llama3.1:8b not found. Available models: mistral:7b",
+  "ollama_url": "http://localhost:11434",
+  "model": "llama3.1:8b",
+  "available_models": ["mistral:7b"]
+}
+```
+
+---
+
+### Natural Language Query
+
+Query drone data using natural language.
+
+**Endpoint:** `POST /api/llm/query`
+
+**Request Body:**
+```json
+{
+  "question": "How many DJI drones were detected today?",
+  "session_id": "user-123",
+  "include_summary": true
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `question` | string | Yes | Natural language question (3-1000 chars) |
+| `session_id` | string | No | Session ID for conversation context |
+| `include_summary` | boolean | No | Include natural language summary (default: true) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "response": "Found 23 DJI drones detected today. The most common model was Mavic 3 (12 detections), followed by Mini 3 Pro (8 detections).",
+  "results": [
+    {
+      "rid_make": "DJI",
+      "rid_model": "Mavic 3",
+      "count": 12
+    },
+    {
+      "rid_make": "DJI",
+      "rid_model": "Mini 3 Pro",
+      "count": 8
+    }
+  ],
+  "row_count": 2,
+  "query_executed": "SELECT rid_make, rid_model, COUNT(*) FROM drones WHERE rid_make = 'DJI' AND time >= NOW() - INTERVAL '24 hours' GROUP BY rid_make, rid_model",
+  "session_id": "user-123",
+  "error": null
+}
+```
+
+**Example Questions:**
+- "What drones were seen in the last hour?"
+- "Show me high altitude flights above 400 meters"
+- "Any FPV signals detected today?"
+- "Which manufacturer is most common?"
+- "Drones with pilot location near 37.77, -122.41"
+
+---
+
+### Query Examples
+
+Get example queries for the UI.
+
+**Endpoint:** `GET /api/llm/examples`
+
+**Response:**
+```json
+{
+  "examples": {
+    "Basic": [
+      "How many drones were detected today?",
+      "Show me DJI drones from the last hour"
+    ],
+    "Filtering": [
+      "Drones flying above 100 meters",
+      "Any drones with pilot location?"
+    ],
+    "Analysis": [
+      "Which manufacturer is most common?",
+      "Busiest time of day for detections"
+    ]
+  }
+}
+```
+
+---
+
+### Clear Session
+
+Clear conversation history for a session.
+
+**Endpoint:** `DELETE /api/llm/session/{session_id}`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session_id` | string | Session ID to clear |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Session user-123 cleared"
+}
 ```
 
 ---
@@ -964,6 +1575,6 @@ See [SECURITY.md](../SECURITY.md) for complete security hardening guide.
 
 ---
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 **API Version:** 1.0.0
 **WarDragon Analytics** - Multi-kit drone surveillance platform
