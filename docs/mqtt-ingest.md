@@ -148,36 +148,95 @@ docker compose restart mosquitto
 
 ### TLS/SSL Configuration
 
-For encrypted connections:
+For encrypted MQTT connections over port 8883:
 
-1. Generate or obtain certificates (self-signed for testing):
+#### Quick Setup (Self-Signed Certificates)
+
+1. Generate certificates using the provided script:
    ```bash
-   mkdir -p mosquitto/certs
-   openssl req -new -x509 -days 365 -nodes \
-     -out mosquitto/certs/server.crt \
-     -keyout mosquitto/certs/server.key
+   ./scripts/generate-mqtt-certs.sh [your-server-hostname]
    ```
 
-2. Update `mosquitto/mosquitto.conf`:
+   This creates:
+   - `mosquitto/certs/ca.crt` - CA certificate (copy to kits)
+   - `mosquitto/certs/ca.key` - CA private key (keep secure)
+   - `mosquitto/certs/server.crt` - Server certificate
+   - `mosquitto/certs/server.key` - Server private key
+
+2. Enable TLS in `mosquitto/mosquitto.conf` (uncomment the TLS section):
    ```conf
+   # TLS listener on port 8883
    listener 8883 0.0.0.0
-   cafile /mosquitto/config/ca.crt
-   certfile /mosquitto/config/server.crt
-   keyfile /mosquitto/config/server.key
+   protocol mqtt
+
+   # Certificate paths
+   cafile /mosquitto/certs/ca.crt
+   certfile /mosquitto/certs/server.crt
+   keyfile /mosquitto/certs/server.key
+
+   # TLS version
+   tls_version tlsv1.2
+
+   # Don't require client certificates
    require_certificate false
    ```
 
 3. Update `.env`:
    ```bash
    MQTT_TLS_ENABLED=true
-   MQTT_BROKER_PORT=8883
+   MQTT_TLS_PORT=8883
    ```
 
-4. Configure DragonSync on kits to use TLS:
-   ```ini
-   mqtt_tls = true
-   mqtt_port = 8883
+4. Restart MQTT services:
+   ```bash
+   docker compose --profile mqtt restart mosquitto
    ```
+
+5. Configure DragonSync on each kit:
+   ```ini
+   [MQTT]
+   mqtt_enabled = true
+   mqtt_host = YOUR_ANALYTICS_SERVER_IP
+   mqtt_port = 8883
+   mqtt_tls = true
+   # Optional: path to CA cert for verification
+   # mqtt_ca_cert = /home/wardragon/ca.crt
+   ```
+
+#### Production TLS Setup
+
+For production environments, use certificates from a trusted CA:
+
+1. **Option A: Let's Encrypt (Free)**
+   ```bash
+   # Install certbot
+   sudo apt install certbot
+
+   # Get certificate (requires port 80 open)
+   sudo certbot certonly --standalone -d mqtt.yourdomain.com
+
+   # Copy to mosquitto certs directory
+   sudo cp /etc/letsencrypt/live/mqtt.yourdomain.com/fullchain.pem mosquitto/certs/server.crt
+   sudo cp /etc/letsencrypt/live/mqtt.yourdomain.com/privkey.pem mosquitto/certs/server.key
+   ```
+
+2. **Option B: Commercial CA**
+   - Purchase certificate from DigiCert, Comodo, etc.
+   - Place `server.crt` and `server.key` in `mosquitto/certs/`
+
+#### Verifying TLS Connection
+
+Test the TLS connection:
+```bash
+# From Analytics server
+docker exec -it wardragon-mosquitto mosquitto_sub \
+  --cafile /mosquitto/certs/ca.crt \
+  -h localhost -p 8883 \
+  -t 'wardragon/#' -v
+
+# From a kit (with openssl)
+openssl s_client -connect YOUR_ANALYTICS_SERVER:8883 -CAfile ca.crt
+```
 
 ## MQTT Topics
 

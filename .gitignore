@@ -121,6 +121,10 @@ config/*_private.yaml
 *.csr
 *.cer
 
+# MQTT TLS certificates (keep .gitkeep for directory structure)
+mosquitto/certs/*
+!mosquitto/certs/.gitkeep
+
 # Docker override files (for local development)
 docker-compose.override.yml
 
