@@ -1118,6 +1118,31 @@ table tbody tr:hover {
     color: #1a1a1a;
 }
 
+/* Source type badges */
+.source-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    font-weight: bold;
+    margin-left: 4px;
+}
+
+.source-badge.source-http {
+    background: #4a90d9;
+    color: #fff;
+}
+
+.source-badge.source-mqtt {
+    background: #9b59b6;
+    color: #fff;
+}
+
+.source-badge.source-both {
+    background: #27ae60;
+    color: #fff;
+}
+
 .kit-details {
     display: flex;
     flex-direction: column;

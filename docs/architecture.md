@@ -408,6 +408,7 @@ kits:
 - [x] Automated database backups (cron-based)
 - [x] ADS-B aircraft tracking (tested)
 - [x] External LLM integration (tested with Ollama)
+- [x] MQTT ingest (kits push data via MQTT, auto-registration)
 - [ ] FPV signal detection (implemented, needs testing)
 - [ ] RBAC (role-based access control)
 - [ ] API keys for kits

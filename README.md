@@ -20,12 +20,23 @@ WarDragon Analytics aggregates DroneID/Remote ID drone detections, ADS-B aircraf
 
 ## Architecture
 
+**Option 1: HTTP Polling (Default)**
 ```
 WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
 +-----------------+        +----------------------+       +---------------+
-| DragonSync API  |  --->  | Collector Service    |  ---> | Web UI :8090  |
-| :8088           |        | TimescaleDB          |       | Grafana :3000 |
+| DragonSync API  |  <---  | Collector Service    |  ---> | Web UI :8090  |
+| :8088           |  poll  | TimescaleDB          |       | Grafana :3000 |
 +-----------------+        +----------------------+       +---------------+
+```
+
+**Option 2: MQTT Push (Optional)**
+```
+WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
++-----------------+        +----------------------+       +---------------+
+| DragonSync      |  push  | MQTT Broker :1883    |  ---> | Web UI :8090  |
+| MQTT Sink       |  --->  | MQTT Ingest Service  |       | Grafana :3000 |
++-----------------+        | TimescaleDB          |       +---------------+
+                           +----------------------+
 ```
 
 **Data collected from each kit:**
@@ -121,6 +132,28 @@ Kits added via the Web UI are stored in the database and persist across restarts
 
 All enterprise features are disabled by default and configured via `.env`. See [SECURITY.md](SECURITY.md) for setup.
 
+### MQTT Ingest (Optional)
+
+Alternative to HTTP polling - kits push data directly via MQTT:
+
+- **Real-time data**: No polling delay, data arrives immediately
+- **Auto-registration**: Kits appear automatically when they first publish
+- **NAT/firewall friendly**: Kits initiate outbound connections only
+- **Hybrid mode**: Use both HTTP polling and MQTT simultaneously
+
+To enable MQTT ingest:
+```bash
+# Enable in .env
+MQTT_INGEST_ENABLED=true
+
+# Start with MQTT profile
+docker compose --profile mqtt up -d
+
+# Configure DragonSync on kits to publish to this server:1883
+```
+
+See [docs/mqtt-ingest.md](docs/mqtt-ingest.md) for detailed setup.
+
 ### Grafana Dashboards (Port 3000)
 
 **Tactical Overview**
@@ -194,6 +227,7 @@ All documentation is located in the [docs/](docs/) folder.
 |----------|-------------|
 | [Operator Guide](docs/operator-guide.md) | Tactical operations workflows |
 | [Grafana Dashboards](docs/grafana-dashboards.md) | Dashboard usage and customization |
+| [MQTT Ingest Guide](docs/mqtt-ingest.md) | Push data from kits via MQTT |
 | [AI Assistant Setup](docs/ollama-setup.md) | Natural language query interface |
 
 ### Reference

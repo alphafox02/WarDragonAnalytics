@@ -178,6 +178,11 @@ websockets==12.0
 # WebSocket protocol implementation
 # Used for live dashboard updates (future feature)
 
+# Optional: MQTT support for push-based data ingest
+aiomqtt==2.0.0
+# Async MQTT client for Python
+# Used for receiving data pushed from WarDragon kits via MQTT
+
 # Pin critical dependencies for security and stability
 # Update regularly and test before deploying to production
 #

@@ -103,7 +103,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8090"]
 
-# Stage 6: Development image with additional tools
+# Stage 6: MQTT Ingest service
+FROM production AS mqtt-ingest
+
+# MQTT Ingest healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import os; exit(0 if os.path.exists('/tmp/mqtt_ingest_healthy') else 1)"
+
+CMD ["python", "mqtt_ingest.py"]
+
+# Stage 7: Development image with additional tools
 FROM production AS development
 
 # Switch back to root for installing dev dependencies

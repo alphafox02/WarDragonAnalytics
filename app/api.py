@@ -96,9 +96,10 @@ class KitStatus(BaseModel):
     kit_id: str
     name: str
     location: Optional[str]
-    api_url: str
+    api_url: Optional[str]  # Optional for MQTT-only kits
     last_seen: Optional[datetime]
     status: str  # online, offline, stale
+    source: Optional[str] = "http"  # http, mqtt, both
 
 
 class DroneTrack(BaseModel):
@@ -293,19 +294,45 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     async with db_pool.acquire() as conn:
+        # Check if source column exists (for backwards compatibility)
+        source_exists = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'kits' AND column_name = 'source'
+            )
+        """)
+
         if kit_id:
-            query = """
-                SELECT kit_id, name, location, api_url, last_seen, status, created_at
-                FROM kits
-                WHERE kit_id = $1
-            """
+            if source_exists:
+                query = """
+                    SELECT kit_id, name, location, api_url, last_seen, status, created_at,
+                           COALESCE(source, 'http') as source
+                    FROM kits
+                    WHERE kit_id = $1
+                """
+            else:
+                query = """
+                    SELECT kit_id, name, location, api_url, last_seen, status, created_at,
+                           'http' as source
+                    FROM kits
+                    WHERE kit_id = $1
+                """
             rows = await conn.fetch(query, kit_id)
         else:
-            query = """
-                SELECT kit_id, name, location, api_url, last_seen, status, created_at
-                FROM kits
-                ORDER BY name
-            """
+            if source_exists:
+                query = """
+                    SELECT kit_id, name, location, api_url, last_seen, status, created_at,
+                           COALESCE(source, 'http') as source
+                    FROM kits
+                    ORDER BY name
+                """
+            else:
+                query = """
+                    SELECT kit_id, name, location, api_url, last_seen, status, created_at,
+                           'http' as source
+                    FROM kits
+                    ORDER BY name
+                """
             rows = await conn.fetch(query)
 
         # Calculate status based on last_seen

@@ -148,6 +148,12 @@ if [ -f "timescaledb/04-audit-log.sql" ]; then
     $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql 2>/dev/null || true
 fi
 
+# MQTT support (adds source column to kits table)
+if [ -f "timescaledb/05-mqtt-support.sql" ]; then
+    echo "Applying 05-mqtt-support.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/05-mqtt-support.sql 2>/dev/null || true
+fi
+
 echo -e "${GREEN}[OK] Database schema applied${NC}"
 echo ""
 
@@ -172,17 +178,26 @@ echo "  Username: admin"
 echo "  Password: (check .env file or output above)"
 echo ""
 echo "Next Steps:"
-echo "  1. Edit config/kits.yaml to add your WarDragon kits"
+echo "  1. Add kits via Web UI (http://localhost:8090) or edit config/kits.yaml"
 echo "  2. Restart collector: $DOCKER_COMPOSE restart collector"
 echo "  3. Access Grafana and configure dashboards"
-echo "  4. Review DEPLOYMENT.md for production setup"
+echo "  4. Review docs/deployment.md for production setup"
+echo ""
+echo -e "${BLUE}MQTT Ingest (Optional):${NC}"
+echo "  Kits can push data via MQTT instead of being polled."
+echo "  To enable:"
+echo "    1. Set MQTT_INGEST_ENABLED=true in .env"
+echo "    2. Run: $DOCKER_COMPOSE --profile mqtt up -d"
+echo "    3. Configure DragonSync on kits to publish to this server:1883"
+echo "  See docs/mqtt-ingest.md for details."
 echo ""
 echo "Useful Commands:"
-echo "  Check status:  make status"
-echo "  View logs:     make logs"
-echo "  Health check:  ./healthcheck.sh"
-echo "  Stop:          make stop"
-echo "  Backup DB:     make backup"
+echo "  Check status:    make status"
+echo "  View logs:       make logs"
+echo "  Health check:    ./healthcheck.sh"
+echo "  Stop:            make stop"
+echo "  Backup DB:       make backup"
+echo "  Enable MQTT:     $DOCKER_COMPOSE --profile mqtt up -d"
 echo ""
 echo -e "${YELLOW}For production deployment, review SECURITY.md${NC}"
 echo ""

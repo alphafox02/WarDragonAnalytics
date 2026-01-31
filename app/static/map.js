@@ -1634,21 +1634,43 @@ function createKitCard(kit) {
 
     const lastSeen = kit.last_seen ? formatTime(kit.last_seen) : 'Never';
 
+    // Source type indicator
+    const source = kit.source || 'http';
+    let sourceIcon, sourceLabel;
+    switch (source) {
+        case 'mqtt':
+            sourceIcon = '📡';
+            sourceLabel = 'MQTT Push';
+            break;
+        case 'both':
+            sourceIcon = '🔄';
+            sourceLabel = 'HTTP + MQTT';
+            break;
+        default:
+            sourceIcon = '🌐';
+            sourceLabel = 'HTTP Poll';
+    }
+
+    // For MQTT-only kits, URL may be null
+    const urlDisplay = kit.api_url ? kit.api_url : '<em>MQTT only</em>';
+    const showTestBtn = kit.api_url && kit.source !== 'mqtt'; // Only show test for HTTP kits
+
     card.innerHTML = `
         <div class="kit-info">
             <h4>
                 ${kit.name || kit.kit_id}
                 <span class="status-badge ${kit.status || 'unknown'}">${kit.status || 'unknown'}</span>
+                <span class="source-badge source-${source}" title="${sourceLabel}">${sourceIcon} ${source.toUpperCase()}</span>
             </h4>
             <div class="kit-details">
                 <span><strong>ID:</strong> ${kit.kit_id}</span>
-                <span><strong>URL:</strong> ${kit.api_url}</span>
+                <span><strong>URL:</strong> ${urlDisplay}</span>
                 ${kit.location ? `<span><strong>Location:</strong> ${kit.location}</span>` : ''}
                 <span><strong>Last Seen:</strong> ${lastSeen}</span>
             </div>
         </div>
         <div class="kit-actions">
-            <button class="btn-test" onclick="testExistingKit('${kit.kit_id}')">Test</button>
+            ${showTestBtn ? `<button class="btn-test" onclick="testExistingKit('${kit.kit_id}')">Test</button>` : ''}
             <button class="btn-delete" onclick="deleteKit('${kit.kit_id}', '${kit.name || kit.kit_id}')">Delete</button>
         </div>
     `;

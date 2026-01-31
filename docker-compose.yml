@@ -185,6 +185,88 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # =============================================================================
+  # MQTT Services (Optional - enable with --profile mqtt)
+  # =============================================================================
+  # These services enable push-based data ingest from WarDragon kits via MQTT.
+  # Alternative to HTTP polling - kits send data directly to the Analytics stack.
+  #
+  # To enable:
+  #   1. Set MQTT_INGEST_ENABLED=true in .env
+  #   2. Run: docker compose --profile mqtt up -d
+  #   3. Configure DragonSync on kits to publish to this server's IP:1883
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: wardragon-mosquitto
+    profiles: ["mqtt"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    ports:
+      - "${MQTT_BROKER_PORT:-1883}:1883"
+    networks:
+      wardragon-net:
+        ipv4_address: 172.20.0.10
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mqtt-ingest:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      target: mqtt-ingest
+    container_name: wardragon-mqtt-ingest
+    profiles: ["mqtt"]
+    environment:
+      DATABASE_URL: postgresql://wardragon:${DB_PASSWORD}@timescaledb:5432/wardragon
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_USE_TLS: ${MQTT_TLS_ENABLED:-false}
+      MQTT_TOPIC_DRONES: ${MQTT_TOPIC_DRONES:-wardragon/drones}
+      MQTT_TOPIC_DRONE_PREFIX: ${MQTT_TOPIC_DRONE_PREFIX:-wardragon/drone/}
+      MQTT_TOPIC_AIRCRAFT: ${MQTT_TOPIC_AIRCRAFT:-wardragon/aircraft}
+      MQTT_TOPIC_SIGNALS: ${MQTT_TOPIC_SIGNALS:-wardragon/signals}
+      MQTT_TOPIC_SYSTEM: ${MQTT_TOPIC_SYSTEM:-wardragon/system}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - wardragon-net
+    restart: unless-stopped
+    dns:
+      - 127.0.0.11
+    extra_hosts:
+      - "timescaledb:172.20.0.2"
+      - "mosquitto:172.20.0.10"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import os; exit(0 if os.path.exists(\"/tmp/mqtt_ingest_healthy\") else 1)' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   wardragon-net:
     driver: bridge
@@ -195,3 +277,5 @@ networks:
 volumes:
   timescale-data:
   grafana-data:
+  mosquitto-data:
+  mosquitto-log:
