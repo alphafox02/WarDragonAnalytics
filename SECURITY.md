@@ -1,5 +1,7 @@
 # WarDragon Analytics - Security Guide
 
+> **⚠️ Development Status:** This project is under active development. While every effort is made to review code for security issues, exposing the web UI, API, or MQTT broker to the public internet without a VPN is not recommended.
+
 ## Security Checklist
 
 ### Pre-Deployment Security
@@ -71,6 +73,57 @@
   - Kits on trusted network or VPN
   - API endpoints validated
   - Retry logic prevents DoS
+
+### MQTT Security (If Using MQTT Ingest)
+
+- [ ] **MQTT Authentication Enabled**
+  ```bash
+  # Set in .env
+  MQTT_AUTH_ENABLED=true
+  MQTT_USERNAME=wardragon
+  MQTT_PASSWORD=<strong-password>
+
+  # Create password file in mosquitto
+  docker exec -it wardragon-mosquitto mosquitto_passwd -c /mosquitto/config/passwd wardragon
+  ```
+
+- [ ] **MQTT TLS Encryption Enabled**
+  - TLS recommended for any network beyond localhost
+  - Especially important for data exchange across untrusted networks
+  - Note: MQTT TLS is currently untested in production
+  ```bash
+  # Generate certificates
+  ./scripts/generate-mqtt-certs.sh your-server-hostname
+
+  # Enable in .env
+  MQTT_TLS_ENABLED=true
+  MQTT_TLS_PORT=8883
+
+  # Uncomment TLS section in mosquitto/mosquitto.conf
+  ```
+
+- [ ] **MQTT Firewall Rules**
+  ```bash
+  # Only allow MQTT from trusted networks/VPN
+  sudo ufw allow from 10.0.0.0/8 to any port 1883   # Internal only
+  sudo ufw allow from 10.0.0.0/8 to any port 8883   # TLS port
+
+  # OR restrict to specific kit IPs
+  sudo ufw allow from 192.168.1.100 to any port 8883
+  ```
+
+- [ ] **MQTT Broker Isolation**
+  - Do not expose MQTT ports (1883/8883) to public internet without VPN
+  - Use TLS (port 8883) instead of unencrypted (port 1883) when possible
+  - Consider client certificate authentication for high-security deployments
+
+### DragonSync API Security (HTTP Polling Mode)
+
+- [ ] **Kit API Protection**
+  - WarDragon kits running DragonSync expose an API on port 8088
+  - This API should NOT be exposed to public internet
+  - Use VPN or private network for kit-to-analytics communication
+  - MQTT push mode (kits initiate outbound) may be preferable to HTTP polling for firewalled environments
 
 ### Data Security
 
@@ -174,6 +227,9 @@ sudo ufw default allow outgoing
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP
 sudo ufw allow 443/tcp   # HTTPS
+# MQTT ports - only if needed and preferably restricted to VPN/internal networks
+# sudo ufw allow from 10.0.0.0/8 to any port 1883   # MQTT (unencrypted)
+# sudo ufw allow from 10.0.0.0/8 to any port 8883   # MQTT TLS
 sudo ufw enable
 ```
 
@@ -352,8 +408,8 @@ GF_ANALYTICS_CHECK_FOR_UPDATES=false
 
 If you discover a security vulnerability:
 
-1. **Do NOT** open a public issue
-2. Email security concerns to: [security-contact@example.com]
+1. Open an issue at [GitHub Issues](https://github.com/alphafox02/WarDragonAnalytics/issues)
+2. For sensitive vulnerabilities, use GitHub's private vulnerability reporting feature
 3. Include:
    - Description of vulnerability
    - Steps to reproduce
