@@ -64,7 +64,7 @@ sudo usermod -aG docker $USER
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/WarDragonAnalytics.git
+git clone https://github.com/alphafox02/WarDragonAnalytics.git
 cd WarDragonAnalytics
 ```
 
@@ -468,7 +468,7 @@ Then reset the database:
 
 ## Getting Help
 
-- **Issues:** [GitHub Issues](https://github.com/yourusername/WarDragonAnalytics/issues)
+- **Issues:** [GitHub Issues](https://github.com/alphafox02/WarDragonAnalytics/issues)
 - **DragonSync:** [alphafox02/DragonSync](https://github.com/alphafox02/DragonSync)
 - **Documentation:** [architecture.md](architecture.md)
 
