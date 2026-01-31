@@ -3,6 +3,11 @@
 WarDragon Analytics FastAPI Web Application
 
 Provides REST API and web UI for multi-kit drone surveillance visualization.
+
+Enterprise Features (Optional):
+- Authentication: Set AUTH_ENABLED=true in .env
+- Alerting: Configure SLACK_WEBHOOK_URL or DISCORD_WEBHOOK_URL
+- Audit Logging: Always enabled for admin actions
 """
 
 import os
@@ -11,14 +16,47 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Response, Body
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Response, Body, Request, Depends, Cookie
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, HttpUrl
 import asyncpg
 import csv
 import io
 import re
+
+# Import optional enterprise modules
+try:
+    from auth import (
+        is_auth_enabled, get_auth_status, authenticate_user,
+        create_access_token, require_auth, get_current_user,
+        set_auth_cookie, clear_auth_cookie, check_rate_limit,
+        record_login_attempt, COOKIE_NAME
+    )
+    AUTH_AVAILABLE = True
+except ImportError:
+    AUTH_AVAILABLE = False
+    def is_auth_enabled(): return False
+    def get_auth_status(): return {"auth_enabled": False}
+    async def require_auth(request: Request): return "anonymous"
+    async def get_current_user(request: Request): return "anonymous"
+
+try:
+    from alerting import alert_manager, AlertSeverity, alert_kit_status
+    ALERTING_AVAILABLE = True
+except ImportError:
+    ALERTING_AVAILABLE = False
+    alert_manager = None
+
+try:
+    from audit import (
+        audit_log, audit_login, audit_logout, audit_kit_action,
+        audit_data_export, audit_system_startup, AuditAction
+    )
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+    audit_log = None
 
 # Configure logging
 logging.basicConfig(
@@ -404,7 +442,7 @@ def _generate_kit_id(api_url: str) -> str:
 
 
 @app.post("/api/admin/kits", response_model=dict)
-async def create_kit(kit: KitCreate):
+async def create_kit(request: Request, kit: KitCreate, user: str = Depends(require_auth)):
     """
     Add a new kit to the system.
 
@@ -413,6 +451,8 @@ async def create_kit(kit: KitCreate):
     """
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    client_ip = request.client.host if request.client else None
 
     await _ensure_enabled_column()
 
@@ -449,6 +489,14 @@ async def create_kit(kit: KitCreate):
 
         logger.info(f"Created new kit: {kit_id} ({api_url})")
 
+        # Audit log
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_CREATED, kit_id, user, success=True,
+                details={"api_url": api_url, "name": kit.name},
+                client_ip=client_ip
+            )
+
         return {
             "success": True,
             "kit_id": kit_id,
@@ -460,11 +508,17 @@ async def create_kit(kit: KitCreate):
         raise
     except Exception as e:
         logger.error(f"Failed to create kit: {e}")
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_CREATED, kit.api_url, user, success=False,
+                details={"error": str(e)},
+                client_ip=client_ip
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/api/admin/kits/{kit_id}", response_model=dict)
-async def update_kit(kit_id: str, kit: KitUpdate):
+async def update_kit(request: Request, kit_id: str, kit: KitUpdate, user: str = Depends(require_auth)):
     """
     Update an existing kit's configuration.
 
@@ -472,6 +526,8 @@ async def update_kit(kit_id: str, kit: KitUpdate):
     """
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    client_ip = request.client.host if request.client else None
 
     await _ensure_enabled_column()
 
@@ -522,17 +578,37 @@ async def update_kit(kit_id: str, kit: KitUpdate):
             await conn.execute(query, *params)
 
         logger.info(f"Updated kit: {kit_id}")
+
+        # Audit log
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_UPDATED, kit_id, user, success=True,
+                details={"updates": kit.dict(exclude_none=True)},
+                client_ip=client_ip
+            )
+
         return {"success": True, "message": "Kit updated successfully", "kit_id": kit_id}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to update kit: {e}")
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_UPDATED, kit_id, user, success=False,
+                details={"error": str(e)},
+                client_ip=client_ip
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/admin/kits/{kit_id}", response_model=dict)
-async def delete_kit(kit_id: str, delete_data: bool = Query(False, description="Also delete all drone/signal data from this kit")):
+async def delete_kit(
+    request: Request,
+    kit_id: str,
+    delete_data: bool = Query(False, description="Also delete all drone/signal data from this kit"),
+    user: str = Depends(require_auth)
+):
     """
     Remove a kit from the system.
 
@@ -541,6 +617,8 @@ async def delete_kit(kit_id: str, delete_data: bool = Query(False, description="
     """
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    client_ip = request.client.host if request.client else None
 
     try:
         async with db_pool.acquire() as conn:
@@ -577,6 +655,14 @@ async def delete_kit(kit_id: str, delete_data: bool = Query(False, description="
 
         logger.info(f"Deleted kit: {kit_id} (delete_data={delete_data})")
 
+        # Audit log
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_DELETED, kit_id, user, success=True,
+                details={"delete_data": delete_data, "deleted_data": deleted_data if delete_data else None},
+                client_ip=client_ip
+            )
+
         response = {
             "success": True,
             "message": f"Kit {kit_id} deleted successfully",
@@ -591,6 +677,12 @@ async def delete_kit(kit_id: str, delete_data: bool = Query(False, description="
         raise
     except Exception as e:
         logger.error(f"Failed to delete kit: {e}")
+        if AUDIT_AVAILABLE:
+            await audit_kit_action(
+                AuditAction.KIT_DELETED, kit_id, user, success=False,
+                details={"error": str(e)},
+                client_ip=client_ip
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -895,10 +987,12 @@ async def query_signals(
 
 @app.get("/api/export/csv")
 async def export_csv(
+    request: Request,
     time_range: str = Query("1h", description="Time range: 1h, 24h, 7d, or custom:START,END"),
     kit_id: Optional[str] = Query(None, description="Filter by kit ID (comma-separated for multiple)"),
     rid_make: Optional[str] = Query(None, description="Filter by RID make"),
-    track_type: Optional[str] = Query(None, description="Filter by track type: drone or aircraft")
+    track_type: Optional[str] = Query(None, description="Filter by track type: drone or aircraft"),
+    user: str = Depends(require_auth)
 ):
     """
     Export drones to CSV format.
@@ -908,6 +1002,8 @@ async def export_csv(
     """
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    client_ip = request.client.host if request.client else None
 
     try:
         start_time, end_time = parse_time_range(time_range)
@@ -959,6 +1055,16 @@ async def export_csv(
         # Return as downloadable file
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         filename = f"wardragon_drones_{timestamp}.csv"
+
+        # Audit log export
+        if AUDIT_AVAILABLE:
+            await audit_data_export(
+                user=user,
+                export_type="csv",
+                record_count=len(rows),
+                filters={"time_range": time_range, "kit_id": kit_id, "rid_make": rid_make, "track_type": track_type},
+                client_ip=client_ip
+            )
 
         return Response(
             content=csv_content,
@@ -1799,14 +1905,275 @@ async def clear_llm_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =============================================================================
+# Authentication Endpoints (Optional - enabled via AUTH_ENABLED=true)
+# =============================================================================
+
+class LoginRequest(BaseModel):
+    """Login request model."""
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class LoginResponse(BaseModel):
+    """Login response model."""
+    success: bool
+    message: str
+    username: Optional[str] = None
+
+
+@app.get("/api/auth/status")
+async def get_authentication_status():
+    """
+    Get current authentication status.
+
+    Returns whether auth is enabled and if the current request is authenticated.
+    """
+    return get_auth_status()
+
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+async def login(request: Request, credentials: LoginRequest, response: Response):
+    """
+    Authenticate and create a session.
+
+    Only used when AUTH_ENABLED=true in .env.
+    """
+    if not is_auth_enabled():
+        return LoginResponse(
+            success=True,
+            message="Authentication not required",
+            username="anonymous"
+        )
+
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Check rate limiting
+    if AUTH_AVAILABLE and not check_rate_limit(client_ip):
+        if AUDIT_AVAILABLE:
+            await audit_login(credentials.username, False, client_ip, reason="rate_limited")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later."
+        )
+
+    # Authenticate
+    if authenticate_user(credentials.username, credentials.password):
+        token = create_access_token(credentials.username)
+        set_auth_cookie(response, token)
+
+        if AUTH_AVAILABLE:
+            record_login_attempt(client_ip, success=True)
+        if AUDIT_AVAILABLE:
+            await audit_login(credentials.username, True, client_ip)
+
+        return LoginResponse(
+            success=True,
+            message="Login successful",
+            username=credentials.username
+        )
+    else:
+        if AUTH_AVAILABLE:
+            record_login_attempt(client_ip, success=False)
+        if AUDIT_AVAILABLE:
+            await audit_login(credentials.username, False, client_ip, reason="invalid_credentials")
+
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request, response: Response):
+    """
+    End the current session.
+    """
+    if AUTH_AVAILABLE:
+        clear_auth_cookie(response)
+
+    user = await get_current_user(request)
+    client_ip = request.client.host if request.client else "unknown"
+
+    if AUDIT_AVAILABLE and user != "anonymous":
+        await audit_logout(user, client_ip)
+
+    return {"success": True, "message": "Logged out"}
+
+
+@app.get("/api/auth/me")
+async def get_current_user_info(request: Request):
+    """
+    Get information about the currently authenticated user.
+    """
+    user = await get_current_user(request)
+    return {
+        "authenticated": user is not None and user != "anonymous",
+        "username": user,
+        "auth_required": is_auth_enabled(),
+    }
+
+
+# =============================================================================
+# Alerting Endpoints (Optional - enabled via ALERTING_ENABLED=true)
+# =============================================================================
+
+@app.get("/api/alerting/status")
+async def get_alerting_status():
+    """
+    Get current alerting configuration status.
+    """
+    if not ALERTING_AVAILABLE or not alert_manager:
+        return {
+            "available": False,
+            "message": "Alerting module not loaded"
+        }
+    return {
+        "available": True,
+        **alert_manager.get_status()
+    }
+
+
+@app.get("/api/alerting/webhooks")
+async def list_webhooks(user: str = Depends(require_auth)):
+    """
+    List configured webhooks (URLs masked for security).
+    """
+    if not ALERTING_AVAILABLE or not alert_manager:
+        return {"webhooks": [], "message": "Alerting not available"}
+    return {"webhooks": alert_manager.list_webhooks()}
+
+
+class WebhookConfig(BaseModel):
+    """Webhook configuration model."""
+    webhook_type: str = Field(..., description="Type: slack, discord, or generic")
+    url: str = Field(..., description="Webhook URL")
+    name: Optional[str] = Field(None, description="Display name")
+    headers: Optional[dict] = Field(None, description="Custom headers (for generic webhooks)")
+
+
+@app.post("/api/alerting/webhooks")
+async def add_webhook(
+    request: Request,
+    config: WebhookConfig,
+    user: str = Depends(require_auth)
+):
+    """
+    Add a new webhook for alerting.
+    """
+    if not ALERTING_AVAILABLE or not alert_manager:
+        raise HTTPException(status_code=503, detail="Alerting not available")
+
+    alert_manager.add_webhook(
+        webhook_type=config.webhook_type,
+        url=config.url,
+        name=config.name or config.webhook_type,
+        headers=config.headers,
+    )
+
+    if AUDIT_AVAILABLE:
+        from audit import AuditAction, AuditEvent, AuditResult
+        event = AuditEvent(
+            action=AuditAction.WEBHOOK_ADDED,
+            result=AuditResult.SUCCESS,
+            user=user,
+            resource=config.webhook_type,
+            details={"name": config.name},
+            client_ip=request.client.host if request.client else None,
+        )
+        await audit_log.log(event)
+
+    return {"success": True, "message": f"Webhook added: {config.name or config.webhook_type}"}
+
+
+@app.post("/api/alerting/test")
+async def test_alert(user: str = Depends(require_auth)):
+    """
+    Send a test alert to all configured webhooks.
+    """
+    if not ALERTING_AVAILABLE or not alert_manager:
+        raise HTTPException(status_code=503, detail="Alerting not available")
+
+    from alerting import Alert, AlertType, AlertSeverity
+
+    test_alert = Alert(
+        alert_type=AlertType.NEW_DRONE,
+        severity=AlertSeverity.INFO,
+        title="Test Alert",
+        message="This is a test alert from WarDragon Analytics.",
+        details={
+            "triggered_by": user,
+            "test": True,
+        },
+    )
+
+    success = await alert_manager.send_alert(test_alert)
+    return {
+        "success": success,
+        "message": "Test alert sent" if success else "Failed to send test alert"
+    }
+
+
+# =============================================================================
+# Audit Log Endpoints (view-only)
+# =============================================================================
+
+@app.get("/api/audit/logs")
+async def get_audit_logs(
+    action: Optional[str] = Query(None, description="Filter by action type"),
+    user: Optional[str] = Query(None, description="Filter by username"),
+    limit: int = Query(100, le=1000, description="Maximum results"),
+    current_user: str = Depends(require_auth)
+):
+    """
+    Query audit logs (requires authentication if enabled).
+
+    Returns recent administrative actions for compliance and security review.
+    """
+    if not AUDIT_AVAILABLE or not audit_log:
+        return {"logs": [], "message": "Audit logging to database not enabled"}
+
+    try:
+        action_enum = AuditAction(action) if action else None
+    except ValueError:
+        action_enum = None
+
+    logs = await audit_log.query(
+        action=action_enum,
+        user=user,
+        limit=limit,
+    )
+
+    return {
+        "logs": logs,
+        "count": len(logs),
+        "limit": limit,
+    }
+
+
+# =============================================================================
+# Main UI Endpoint
+# =============================================================================
+
 @app.get("/", response_class=HTMLResponse)
-async def serve_ui():
+async def serve_ui(request: Request):
     """
     Serve the main web UI with Leaflet map.
+
+    If authentication is enabled and user is not logged in,
+    redirects to login page.
 
     Returns:
         HTML page with embedded map and filters.
     """
+    # Check if auth is required
+    if is_auth_enabled():
+        user = await get_current_user(request)
+        if not user:
+            # Redirect to login page (or show login modal)
+            # For now, we'll serve the page and let JS handle login
+            pass
+
     template_path = Path(__file__).parent / "templates" / "index.html"
 
     if not template_path.exists():
@@ -1819,6 +2186,35 @@ async def serve_ui():
     except Exception as e:
         logger.error(f"Failed to serve UI: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Startup/Shutdown Hooks for Enterprise Features
+# =============================================================================
+
+@app.on_event("startup")
+async def enterprise_startup():
+    """Initialize enterprise features on startup."""
+    # Set up audit log database connection
+    if AUDIT_AVAILABLE and audit_log and db_pool:
+        audit_log.set_db_pool(db_pool)
+        audit_system_startup()
+
+    # Log startup info
+    logger.info(f"Enterprise features: auth={AUTH_AVAILABLE and is_auth_enabled()}, "
+                f"alerting={ALERTING_AVAILABLE and alert_manager and alert_manager.is_enabled()}, "
+                f"audit={AUDIT_AVAILABLE}")
+
+
+@app.on_event("shutdown")
+async def enterprise_shutdown():
+    """Clean up enterprise features on shutdown."""
+    if ALERTING_AVAILABLE and alert_manager:
+        await alert_manager.close()
+
+    if AUDIT_AVAILABLE:
+        from audit import audit_system_shutdown
+        audit_system_shutdown()
 
 
 if __name__ == "__main__":

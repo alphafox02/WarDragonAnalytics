@@ -123,22 +123,32 @@ fi
 
 echo ""
 
-# Verify database schema was created
-echo "Verifying database schema..."
-if ! $DOCKER_CMD exec wardragon-timescaledb psql -U wardragon -d wardragon -c "SELECT 1 FROM kits LIMIT 1" &> /dev/null; then
-    echo -e "${YELLOW}Database tables not found - applying schema...${NC}"
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
-    echo -e "${GREEN}[OK] Database schema applied${NC}"
-else
-    echo -e "${GREEN}[OK] Database schema verified${NC}"
-    # Apply extended fields migration for existing databases (safe to run multiple times)
-    if [ -f "timescaledb/03-extended-fields.sql" ]; then
-        echo "Applying extended fields migration..."
-        $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql 2>/dev/null || true
-        echo -e "${GREEN}[OK] Extended fields verified${NC}"
-    fi
+# Apply database schema (all scripts use IF NOT EXISTS, safe for new and existing installs)
+echo "Applying database schema..."
+
+# Core schema
+echo "Applying 01-init.sql..."
+$DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql 2>/dev/null || true
+
+# Pattern detection views
+if [ -f "timescaledb/02-pattern-views.sql" ]; then
+    echo "Applying 02-pattern-views.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql 2>/dev/null || true
 fi
+
+# Extended telemetry fields (adds columns if missing, skips if exist)
+if [ -f "timescaledb/03-extended-fields.sql" ]; then
+    echo "Applying 03-extended-fields.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql 2>/dev/null || true
+fi
+
+# Audit log table (creates if missing, skips if exists)
+if [ -f "timescaledb/04-audit-log.sql" ]; then
+    echo "Applying 04-audit-log.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql 2>/dev/null || true
+fi
+
+echo -e "${GREEN}[OK] Database schema applied${NC}"
 echo ""
 
 # Display status

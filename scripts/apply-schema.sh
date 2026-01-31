@@ -87,6 +87,11 @@ if [ -f "timescaledb/03-extended-fields.sql" ]; then
     $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql
 fi
 
+if [ -f "timescaledb/04-audit-log.sql" ]; then
+    echo "Applying 04-audit-log.sql (audit logging table - optional)..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql
+fi
+
 echo ""
 echo -e "${GREEN}Schema applied successfully!${NC}"
 echo ""

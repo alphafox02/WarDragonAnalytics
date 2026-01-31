@@ -401,12 +401,17 @@ kits:
 - [x] Data retention policies
 - [x] AI Assistant (natural language queries via Ollama)
 
-### Phase 4: Production Features
-- [ ] Authentication (user accounts)
+### Phase 4: Enterprise Features - In Progress
+- [x] Authentication (optional password protection for web UI)
+- [x] Alert webhooks (Slack, Discord, generic HTTP)
+- [x] Audit logging (admin actions tracked)
+- [x] Automated database backups (cron-based)
+- [x] ADS-B aircraft tracking (tested)
+- [x] External LLM integration (tested with Ollama)
+- [ ] FPV signal detection (implemented, needs testing)
 - [ ] RBAC (role-based access control)
 - [ ] API keys for kits
 - [ ] Encrypted kit-to-analytics communication
-- [ ] Alert webhooks (Slack, email, PagerDuty)
 - [ ] Mobile-responsive UI
 - [ ] KML export (Google Earth)
 

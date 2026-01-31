@@ -6,7 +6,7 @@ Complete reference documentation for all WarDragon Analytics REST API endpoints.
 
 **Format:** JSON
 
-**Authentication:** None (add authentication in production - see [SECURITY.md](../SECURITY.md))
+**Authentication:** Optional (set `AUTH_ENABLED=true` in `.env` - see [SECURITY.md](../SECURITY.md))
 
 ---
 
@@ -1541,15 +1541,16 @@ All endpoints are optimized with TimescaleDB indexes on:
 
 ## Security Considerations
 
-**WARNING:** The default deployment has **NO AUTHENTICATION**.
+**Note:** Optional authentication is available but disabled by default.
 
 For production deployments:
 
-1. **Add authentication** - Use API keys, OAuth2, or JWT tokens
-2. **Use HTTPS** - Always encrypt API traffic in production
-3. **Rate limiting** - Prevent abuse with rate limits
-4. **Network isolation** - Restrict API access to trusted networks
-5. **Input validation** - All parameters are validated, but review security settings
+1. **Enable authentication** - Set `AUTH_ENABLED=true` in `.env` (JWT-based, rate limited)
+2. **Configure alerting** - Set `ALERTING_ENABLED=true` for Slack/Discord webhooks
+3. **Enable audit logging** - Tracks admin actions, optionally stored in database
+4. **Use HTTPS** - Always encrypt API traffic in production
+5. **Network isolation** - Restrict API access to trusted networks
+6. **Automated backups** - Run `./scripts/setup-backup-cron.sh` for daily backups
 
 See [SECURITY.md](../SECURITY.md) for complete security hardening guide.
 

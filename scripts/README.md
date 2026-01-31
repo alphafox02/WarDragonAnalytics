@@ -182,9 +182,35 @@ All scripts:
 
 ---
 
+### setup-backup-cron.sh
+**Configure automated backups**
+
+Sets up a cron job for daily automatic backups.
+
+```bash
+# Set up daily backups at 2 AM (default)
+./scripts/setup-backup-cron.sh
+
+# Set up daily backups at 3 AM
+./scripts/setup-backup-cron.sh 3
+
+# Remove the backup cron job
+./scripts/setup-backup-cron.sh remove
+```
+
+---
+
 ## Automation
 
-### Automated Backups
+### Automated Backups (Easy Way)
+
+Use the setup script:
+
+```bash
+./scripts/setup-backup-cron.sh    # Sets up daily 2 AM backups
+```
+
+### Automated Backups (Manual)
 
 Add to crontab for daily backups at 2 AM:
 

@@ -441,13 +441,15 @@ Then reset the database:
 ## Next Steps
 
 1. **Explore Grafana dashboards** - See pre-built analytics and visualizations
-2. **Configure alerts** - Set up geofencing and RID watchlist (coming soon)
-3. **Export data** - Use CSV/KML export for offline analysis
-4. **Customize dashboards** - Create your own Grafana panels
-5. **Read the docs:**
+2. **Configure alerts** - Set up webhook alerting (Slack, Discord) in `.env`
+3. **Export data** - Use CSV export for offline analysis
+4. **Enable authentication** - Set `AUTH_ENABLED=true` for password protection
+5. **Set up automated backups** - Run `./scripts/setup-backup-cron.sh`
+6. **Customize dashboards** - Create your own Grafana panels
+7. **Read the docs:**
    - [Architecture Design](architecture.md)
-   - [Development Guide](development.md) (coming soon)
    - [Deployment Guide](deployment.md)
+   - [Security Guide](../SECURITY.md)
 
 ---
 

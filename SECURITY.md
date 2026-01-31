@@ -64,8 +64,8 @@
 - [ ] **Web API Security**
   - CORS properly configured
   - Input validation enabled
-  - Rate limiting implemented (future)
-  - Authentication required (future - Phase 4)
+  - Rate limiting on login attempts (enabled with AUTH_ENABLED=true)
+  - Optional authentication available (set AUTH_ENABLED=true in .env)
 
 - [ ] **Collector Security**
   - Kits on trusted network or VPN
@@ -115,19 +115,32 @@
 
 ### Monitoring and Auditing
 
+- [ ] **Application Audit Logging**
+  - Audit logs automatically track admin actions (kit management, exports, logins)
+  - Logs written to application log file by default
+  - Optional: Enable database audit storage with `AUDIT_TO_DATABASE=true`
+  - Query audit logs via `/api/audit/logs` endpoint
+
 - [ ] **Log Monitoring**
   ```bash
   # Monitor authentication attempts
   docker-compose logs grafana | grep -i "auth"
+  docker-compose logs web | grep -i "audit"
 
   # Monitor database connections
   docker exec wardragon-timescaledb psql -U wardragon wardragon -c "
     SELECT * FROM pg_stat_activity WHERE datname = 'wardragon';"
   ```
 
+- [ ] **Alerting Integration**
+  - Configure webhook alerts for security events (optional)
+  - Supports Slack, Discord, and generic HTTP webhooks
+  - Set `ALERTING_ENABLED=true` and configure webhook URLs in .env
+
 - [ ] **Failed Login Alerts**
   - Monitor Grafana failed logins
-  - Set up alerts for suspicious activity
+  - Web UI login attempts logged (when AUTH_ENABLED=true)
+  - Rate limiting prevents brute force attacks
 
 - [ ] **Resource Monitoring**
   - CPU/memory usage alerts

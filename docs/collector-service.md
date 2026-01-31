@@ -83,7 +83,8 @@ Health tracker that:
 
 ### 4. DatabaseWriter
 Database interface that:
-- Manages connection pool (10 base, 20 overflow)
+- Manages connection pool (20 base, 40 overflow) for 10+ kit scalability
+- Batch inserts for improved throughput
 - Inserts normalized drone records
 - Inserts signal detections
 - Inserts system health metrics
@@ -269,7 +270,7 @@ This prevents overwhelming offline kits while still attempting recovery.
 - **CPU**: 5-20% on 4-core system (10 kits)
 - **Memory**: 100-300 MB (includes connection pools)
 - **Network**: 1-10 KB/s per kit (depends on data volume)
-- **Database connections**: 10 base + 20 overflow
+- **Database connections**: 20 base + 40 overflow (scalable to 10+ kits)
 
 ### Optimization Tips
 1. Increase `POLL_INTERVAL` for slower updates

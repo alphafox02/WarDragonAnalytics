@@ -145,10 +145,10 @@ class DatabaseWriter:
             self.engine = create_engine(
                 self.database_url,
                 poolclass=QueuePool,
-                pool_size=10,
-                max_overflow=20,
-                pool_pre_ping=True,  # Verify connections before using
-                pool_recycle=3600,   # Recycle connections after 1 hour
+                pool_size=20,           # Increased from 10 for better concurrency with 10+ kits
+                max_overflow=40,        # Increased from 20 for burst capacity
+                pool_pre_ping=True,     # Verify connections before using
+                pool_recycle=3600,      # Recycle connections after 1 hour
                 echo=False
             )
             logger.info("Database connection pool created")
@@ -168,39 +168,41 @@ class DatabaseWriter:
             return False
 
     async def insert_drones(self, kit_id: str, drones: List[Dict]) -> int:
-        """Insert drone records into database"""
+        """Insert drone records into database using batch inserts for efficiency"""
         if not drones:
             return 0
 
         inserted = 0
         try:
             with self.engine.connect() as conn:
+                query = text("""
+                    INSERT INTO drones (
+                        time, kit_id, drone_id, lat, lon, alt, speed, heading,
+                        vspeed, height, direction, op_status, runtime, id_type,
+                        pilot_lat, pilot_lon, home_lat, home_lon,
+                        mac, rssi, freq, ua_type, operator_id, caa_id,
+                        rid_make, rid_model, rid_source, track_type
+                    ) VALUES (
+                        :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
+                        :vspeed, :height, :direction, :op_status, :runtime, :id_type,
+                        :pilot_lat, :pilot_lon, :home_lat, :home_lon,
+                        :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
+                        :rid_make, :rid_model, :rid_source, :track_type
+                    )
+                    ON CONFLICT (time, kit_id, drone_id) DO UPDATE SET
+                        lat = EXCLUDED.lat,
+                        lon = EXCLUDED.lon,
+                        alt = EXCLUDED.alt,
+                        speed = EXCLUDED.speed,
+                        heading = EXCLUDED.heading,
+                        vspeed = EXCLUDED.vspeed,
+                        height = EXCLUDED.height
+                """)
+
+                # Prepare all records for batch insert
+                batch_params = []
                 for drone in drones:
                     try:
-                        query = text("""
-                            INSERT INTO drones (
-                                time, kit_id, drone_id, lat, lon, alt, speed, heading,
-                                vspeed, height, direction, op_status, runtime, id_type,
-                                pilot_lat, pilot_lon, home_lat, home_lon,
-                                mac, rssi, freq, ua_type, operator_id, caa_id,
-                                rid_make, rid_model, rid_source, track_type
-                            ) VALUES (
-                                :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
-                                :vspeed, :height, :direction, :op_status, :runtime, :id_type,
-                                :pilot_lat, :pilot_lon, :home_lat, :home_lon,
-                                :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
-                                :rid_make, :rid_model, :rid_source, :track_type
-                            )
-                            ON CONFLICT (time, kit_id, drone_id) DO UPDATE SET
-                                lat = EXCLUDED.lat,
-                                lon = EXCLUDED.lon,
-                                alt = EXCLUDED.alt,
-                                speed = EXCLUDED.speed,
-                                heading = EXCLUDED.heading,
-                                vspeed = EXCLUDED.vspeed,
-                                height = EXCLUDED.height
-                        """)
-
                         # Normalize timestamp
                         timestamp = self._parse_timestamp(drone.get('timestamp'))
 
@@ -209,7 +211,7 @@ class DatabaseWriter:
                         if drone.get('icao'):
                             track_type = 'aircraft'
 
-                        conn.execute(query, {
+                        batch_params.append({
                             'time': timestamp,
                             'kit_id': kit_id,
                             # Priority: drone_id (explicit), id (serial from DragonSync), icao (aircraft), mac (fallback)
@@ -241,12 +243,29 @@ class DatabaseWriter:
                             'rid_source': drone.get('rid', {}).get('source') or drone.get('rid_source') or drone.get('source'),
                             'track_type': track_type
                         })
-                        conn.commit()
-                        inserted += 1
-                    except SQLAlchemyError as e:
-                        logger.error(f"Failed to insert drone record: {e}")
-                        conn.rollback()
+                    except Exception as e:
+                        logger.warning(f"Failed to prepare drone record: {e}")
                         continue
+
+                # Execute batch insert with single commit
+                if batch_params:
+                    try:
+                        for params in batch_params:
+                            conn.execute(query, params)
+                        conn.commit()
+                        inserted = len(batch_params)
+                    except SQLAlchemyError as e:
+                        logger.error(f"Batch insert failed, falling back to individual inserts: {e}")
+                        conn.rollback()
+                        # Fallback: try individual inserts for partial success
+                        for params in batch_params:
+                            try:
+                                conn.execute(query, params)
+                                conn.commit()
+                                inserted += 1
+                            except SQLAlchemyError:
+                                conn.rollback()
+                                continue
 
             if inserted > 0:
                 logger.debug(f"Inserted {inserted} drone records for kit {kit_id}")
@@ -256,31 +275,33 @@ class DatabaseWriter:
             return 0
 
     async def insert_signals(self, kit_id: str, signals: List[Dict]) -> int:
-        """Insert signal records into database"""
+        """Insert signal records into database using batch inserts for efficiency"""
         if not signals:
             return 0
 
         inserted = 0
         try:
             with self.engine.connect() as conn:
+                query = text("""
+                    INSERT INTO signals (
+                        time, kit_id, freq_mhz, power_dbm, bandwidth_mhz,
+                        lat, lon, alt, detection_type,
+                        pal_conf, ntsc_conf, source, signal_type
+                    ) VALUES (
+                        :time, :kit_id, :freq_mhz, :power_dbm, :bandwidth_mhz,
+                        :lat, :lon, :alt, :detection_type,
+                        :pal_conf, :ntsc_conf, :source, :signal_type
+                    )
+                    ON CONFLICT (time, kit_id, freq_mhz) DO UPDATE SET
+                        power_dbm = EXCLUDED.power_dbm,
+                        pal_conf = EXCLUDED.pal_conf,
+                        ntsc_conf = EXCLUDED.ntsc_conf
+                """)
+
+                # Prepare all records for batch insert
+                batch_params = []
                 for signal in signals:
                     try:
-                        query = text("""
-                            INSERT INTO signals (
-                                time, kit_id, freq_mhz, power_dbm, bandwidth_mhz,
-                                lat, lon, alt, detection_type,
-                                pal_conf, ntsc_conf, source, signal_type
-                            ) VALUES (
-                                :time, :kit_id, :freq_mhz, :power_dbm, :bandwidth_mhz,
-                                :lat, :lon, :alt, :detection_type,
-                                :pal_conf, :ntsc_conf, :source, :signal_type
-                            )
-                            ON CONFLICT (time, kit_id, freq_mhz) DO UPDATE SET
-                                power_dbm = EXCLUDED.power_dbm,
-                                pal_conf = EXCLUDED.pal_conf,
-                                ntsc_conf = EXCLUDED.ntsc_conf
-                        """)
-
                         timestamp = self._parse_timestamp(signal.get('timestamp'))
 
                         # Determine detection type
@@ -289,7 +310,7 @@ class DatabaseWriter:
                         if freq and 5600 <= freq <= 5900:
                             detection_type = signal.get('type', 'analog')
 
-                        conn.execute(query, {
+                        batch_params.append({
                             'time': timestamp,
                             'kit_id': kit_id,
                             'freq_mhz': freq,
@@ -305,12 +326,29 @@ class DatabaseWriter:
                             'source': signal.get('source'),  # guard, confirm
                             'signal_type': signal.get('signal_type')  # fpv
                         })
-                        conn.commit()
-                        inserted += 1
-                    except SQLAlchemyError as e:
-                        logger.error(f"Failed to insert signal record: {e}")
-                        conn.rollback()
+                    except Exception as e:
+                        logger.warning(f"Failed to prepare signal record: {e}")
                         continue
+
+                # Execute batch insert with single commit
+                if batch_params:
+                    try:
+                        for params in batch_params:
+                            conn.execute(query, params)
+                        conn.commit()
+                        inserted = len(batch_params)
+                    except SQLAlchemyError as e:
+                        logger.error(f"Batch signal insert failed, falling back to individual inserts: {e}")
+                        conn.rollback()
+                        # Fallback: try individual inserts for partial success
+                        for params in batch_params:
+                            try:
+                                conn.execute(query, params)
+                                conn.commit()
+                                inserted += 1
+                            except SQLAlchemyError:
+                                conn.rollback()
+                                continue
 
             if inserted > 0:
                 logger.debug(f"Inserted {inserted} signal records for kit {kit_id}")

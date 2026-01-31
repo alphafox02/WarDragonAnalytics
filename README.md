@@ -30,7 +30,7 @@ WarDragon Kits (Field)     Analytics Server (Docker)      User Interfaces
 
 **Data collected from each kit:**
 - Drones via DJI DroneID (OcuSync) and Remote ID (Bluetooth, Wi-Fi Beacon/NAN)
-- Aircraft via ADS-B (untested)
+- Aircraft via ADS-B
 - FPV signals (5.8GHz analog video) (untested)
 - Kit system health (CPU, memory, disk, temperature, GPS position)
 
@@ -110,6 +110,16 @@ Kits added via the Web UI are stored in the database and persist across restarts
 - Real-time updates (5-second refresh)
 - Kit management interface
 - CSV export (untested)
+- AI Assistant for natural language queries (optional, requires Ollama)
+
+### Enterprise Features (Optional)
+
+- **Authentication**: Optional password protection for web UI (JWT-based)
+- **Webhook Alerting**: Slack, Discord, and generic HTTP webhook notifications
+- **Audit Logging**: Track admin actions (kit management, exports, logins)
+- **Automated Backups**: Scheduled database backups with retention policy
+
+All enterprise features are disabled by default and configured via `.env`. See [SECURITY.md](SECURITY.md) for setup.
 
 ### Grafana Dashboards (Port 3000)
 
