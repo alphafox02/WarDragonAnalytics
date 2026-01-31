@@ -1,4 +1,4 @@
-? #!/bin/bash
+#!/bin/bash
 # WarDragon Analytics Quick Start Script
 # Automated setup and deployment
 
