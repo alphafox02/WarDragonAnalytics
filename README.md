@@ -4,6 +4,8 @@ Centralized logging, analysis, and visualization platform for drone detection da
 
 **Important:** This is designed to run on a separate server or workstation, not on the WarDragon kit itself. While it can technically run on a kit, the resource overhead (TimescaleDB, Grafana) is better suited for a dedicated machine. For lightweight on-kit history, a future integration with the WarDragon ATAK Plugin is planned to provide historical track data directly to TAK users without requiring a full analytics stack.
 
+> **⚠️ Security Notice:** This project is under active development. While every effort is made to review code for security issues, exposing the web UI or API to the public internet without a VPN is not recommended. Note that WarDragon kits must be network-reachable for HTTP polling, which means the DragonSync API would also need protection—you wouldn't want to expose that to the public either. For environments requiring data exchange across untrusted networks, MQTT with TLS encryption (port 8883) may offer the most secure transport option, though this feature is currently untested in production. See [SECURITY.md](SECURITY.md) for hardening recommendations.
+
 ## Overview
 
 WarDragon Analytics aggregates DroneID/Remote ID drone detections, ADS-B aircraft tracks, and FPV signal detections from multiple WarDragon field kits into a single interface. It provides:
