@@ -71,8 +71,9 @@ UA_TYPES = {
     6: "Glider",
 }
 
-# Kit locations (example GPS coordinates)
-KIT_BASE_LOCATIONS = [
+# Kit locations (example GPS coordinates) - spread across US
+# Used when --clustered is NOT set
+KIT_BASE_LOCATIONS_SPREAD = [
     (37.7749, -122.4194, "San Francisco, CA"),    # SF
     (34.0522, -118.2437, "Los Angeles, CA"),      # LA
     (40.7128, -74.0060, "New York, NY"),          # NYC
@@ -82,6 +83,19 @@ KIT_BASE_LOCATIONS = [
     (39.7392, -104.9903, "Denver, CO"),           # Denver
     (47.6062, -122.3321, "Seattle, WA"),          # Seattle
 ]
+
+# Clustered kit locations - all within ~5km of each other
+# Used for multi-kit detection testing (same drone seen by multiple kits)
+KIT_BASE_LOCATIONS_CLUSTERED = [
+    (37.7749, -122.4194, "Site Alpha"),     # Center point
+    (37.7820, -122.4100, "Site Bravo"),     # ~1km NE
+    (37.7680, -122.4280, "Site Charlie"),   # ~1km SW
+    (37.7800, -122.4300, "Site Delta"),     # ~1km NW
+    (37.7700, -122.4100, "Site Echo"),      # ~1km SE
+]
+
+# Default to spread locations (backwards compatible)
+KIT_BASE_LOCATIONS = KIT_BASE_LOCATIONS_SPREAD
 
 
 # ============================================================================
@@ -168,14 +182,29 @@ class DroneTrack:
         self.current_waypoint_idx = 0
 
     def _generate_waypoints(self, kit_location: Tuple[float, float]) -> List[Tuple[float, float, float]]:
-        """Generate 3-8 waypoints for the drone flight."""
+        """Generate 3-8 waypoints for the drone flight.
+
+        First waypoint starts at home/pilot location (takeoff).
+        Last waypoint returns near home location (landing).
+        """
         num_waypoints = random.randint(3, 8)
         waypoints = []
 
-        for _ in range(num_waypoints):
+        # First waypoint: start at home/pilot location (takeoff)
+        takeoff_alt = random.uniform(5, 20)  # Low altitude at takeoff
+        waypoints.append((self.home_lat, self.home_lon, takeoff_alt))
+
+        # Middle waypoints: random positions within 2km of kit
+        for _ in range(num_waypoints - 2):
             lat, lon = random_walk_gps(kit_location[0], kit_location[1], 2.0)
             alt = random.uniform(20, self.max_altitude)
             waypoints.append((lat, lon, alt))
+
+        # Last waypoint: return near home (landing approach)
+        # Add small offset for realism
+        land_lat, land_lon = random_walk_gps(self.home_lat, self.home_lon, 0.05)
+        land_alt = random.uniform(5, 15)
+        waypoints.append((land_lat, land_lon, land_alt))
 
         return waypoints
 
@@ -472,6 +501,7 @@ def generate_test_data(
     db_url: str = None,
     signal_probability: float = 0.3,
     multi_kit_probability: float = 0.3,
+    clustered: bool = None,
 ) -> Dict[str, int]:
     """
     Generate test data for WarDragon Analytics.
@@ -484,6 +514,8 @@ def generate_test_data(
         db_url: Database URL (required for db mode)
         signal_probability: Probability of FPV signal detection per interval
         multi_kit_probability: Probability of a drone being seen by multiple kits (for RSSI triangulation testing)
+        clustered: If True, place kits close together (~1km apart) for multi-kit testing.
+                   If None (default), auto-enable when multi_kit_probability > 0
 
     Returns:
         Dict with counts of generated records
@@ -508,10 +540,16 @@ def generate_test_data(
     end_time = datetime.now(timezone.utc)
     start_time = end_time - duration
 
+    # Determine if we should use clustered kit locations
+    # Auto-enable clustering when multi-kit testing is requested
+    use_clustered = clustered if clustered is not None else (multi_kit_probability > 0)
+    kit_locations = KIT_BASE_LOCATIONS_CLUSTERED if use_clustered else KIT_BASE_LOCATIONS_SPREAD
+
     print(f"\nGenerating test data:")
     print(f"  Time range: {start_time.isoformat()} to {end_time.isoformat()}")
     print(f"  Duration: {duration}")
     print(f"  Kits: {num_kits}")
+    print(f"  Kit placement: {'CLUSTERED (~1km apart)' if use_clustered else 'SPREAD (different cities)'}")
     print(f"  Drones per kit: ~{drones_per_kit}")
     print(f"  Output mode: {output_mode}\n")
 
@@ -521,7 +559,7 @@ def generate_test_data(
 
     for i in range(num_kits):
         kit_id = f"kit-{i+1:03d}"
-        location_info = KIT_BASE_LOCATIONS[i % len(KIT_BASE_LOCATIONS)]
+        location_info = kit_locations[i % len(kit_locations)]
 
         kit = {
             "kit_id": kit_id,
@@ -803,6 +841,19 @@ Examples:
         help="Probability of drones being shared across multiple kits (for RSSI triangulation testing, 0.0-1.0)"
     )
 
+    parser.add_argument(
+        "--clustered",
+        action="store_true",
+        default=None,
+        help="Place all kits close together (~1km apart) for realistic multi-kit testing. Auto-enabled when --multi-kit-probability > 0"
+    )
+
+    parser.add_argument(
+        "--spread",
+        action="store_true",
+        help="Place kits in different cities (spread across US). Overrides auto-clustering."
+    )
+
     args = parser.parse_args()
 
     # Parse duration
@@ -816,6 +867,13 @@ Examples:
 
     # Generate data
     try:
+        # Determine clustering: --spread overrides, --clustered forces, otherwise auto
+        clustered = None  # Auto-detect based on multi_kit_probability
+        if args.spread:
+            clustered = False
+        elif args.clustered:
+            clustered = True
+
         stats = generate_test_data(
             num_kits=args.kits,
             drones_per_kit=args.drones,
@@ -824,6 +882,7 @@ Examples:
             db_url=args.db_url if args.mode == "db" else None,
             signal_probability=args.signal_probability,
             multi_kit_probability=args.multi_kit_probability,
+            clustered=clustered,
         )
 
         print("\n" + "="*60)

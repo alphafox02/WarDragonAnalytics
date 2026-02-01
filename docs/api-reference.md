@@ -1034,7 +1034,11 @@ Estimate drone location using RSSI-based triangulation from multiple kits, with 
       "time": "2026-01-20T15:30:02Z"
     }
   ],
-  "algorithm": "weighted_centroid",
+  "algorithm": "two_kit_weighted",
+  "estimated_distances": [
+    {"kit_id": "kit-alpha", "distance_m": 178},
+    {"kit_id": "kit-bravo", "distance_m": 398}
+  ],
   "spoofing_score": 0.15,
   "spoofing_suspected": false,
   "spoofing_reason": null
@@ -1043,28 +1047,35 @@ Estimate drone location using RSSI-based triangulation from multiple kits, with 
 
 **Response Fields:**
 - `actual` - Drone's reported GPS position (null if no GPS data available)
-- `estimated` - Calculated position based on RSSI-weighted centroid
+- `estimated` - Calculated position based on RSSI trilateration
 - `error_meters` - Distance between estimated and actual (null if no actual)
-- `confidence_radius_m` - Estimated accuracy radius based on kit spread and signal quality
+- `confidence_radius_m` - Estimated accuracy radius
 - `observations` - Kit data used for calculation
-- `algorithm` - Algorithm used (`weighted_centroid` or `single_kit`)
+- `algorithm` - Algorithm used: `single_kit`, `two_kit_weighted`, or `trilateration`
+- `estimated_distances` - Array of kit_id and estimated distance in meters (from RSSI)
 - `spoofing_score` - 0.0-1.0 indicating likelihood of GPS spoofing (null if no actual position)
 - `spoofing_suspected` - True if spoofing_score >= 0.5 (null if no actual position)
 - `spoofing_reason` - Explanation when spoofing is suspected or warrants monitoring
 
+**Algorithm:**
+
+Uses the [log-distance path loss model](https://en.wikipedia.org/wiki/Log-distance_path_loss_model) to convert RSSI to estimated distance:
+
+```
+distance = 10^((TxPower - RSSI) / (10 * n))
+```
+
+Then applies trilateration based on number of kits:
+
+| Kits | Method | Description |
+|------|--------|-------------|
+| 1 | `single_kit` | Returns kit position with distance as confidence radius |
+| 2 | `two_kit_weighted` | Position along line between kits, weighted by inverse distance |
+| 3+ | `trilateration` | Iterative gradient descent to find best-fit position |
+
 **Spoofing Detection:**
 
-The endpoint compares the drone's reported GPS position against the RSSI-estimated position to detect potential GPS spoofing. The spoofing score is calculated based on:
-
-1. **Error ratio**: How much the position error exceeds the expected accuracy
-   - Error within confidence radius: Score ~0-0.15 (normal)
-   - Error 2-4x confidence radius: Score ~0.3-0.6 (suspicious)
-   - Error 4x+ confidence radius: Score 0.6-1.0 (likely spoofing)
-
-2. **Number of observing kits**: More kits = higher confidence in RSSI estimate
-   - 2 kits: Confidence factor 0.7
-   - 3 kits: Confidence factor 0.85
-   - 4+ kits: Confidence factor 1.0
+The endpoint compares the drone's reported GPS position against the RSSI-estimated position to detect potential GPS spoofing:
 
 | Spoofing Score | Interpretation |
 |----------------|----------------|
@@ -1072,8 +1083,6 @@ The endpoint compares the drone's reported GPS position against the RSSI-estimat
 | 0.30 - 0.49 | Warrants monitoring - some deviation |
 | 0.50 - 0.69 | Suspicious - significant deviation |
 | 0.70 - 1.0 | Likely spoofing - extreme deviation |
-
-**Algorithm:** Uses weighted centroid where each kit's position is weighted by signal strength. Stronger signals (less negative RSSI) receive higher weights since that kit is likely closer to the drone.
 
 **Status Codes:**
 - `200 OK` - Success
@@ -1109,7 +1118,8 @@ curl "http://localhost:8090/api/analysis/estimate-location/DJI-TRIANGLE?time_win
   "error_meters": 1250.8,
   "confidence_radius_m": 180.0,
   "observations": [...],
-  "algorithm": "weighted_centroid",
+  "algorithm": "trilateration",
+  "estimated_distances": [...],
   "spoofing_score": 0.72,
   "spoofing_suspected": true,
   "spoofing_reason": "Position error (1251m) is 6.9x the expected accuracy (180m)"

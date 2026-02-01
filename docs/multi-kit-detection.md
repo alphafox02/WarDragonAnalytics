@@ -114,7 +114,7 @@ For effective triangulation:
 
 ## RSSI Location Estimation
 
-For drones observed by 2+ kits, you can estimate the drone's location using RSSI-weighted triangulation. This feature is accessible from the drone popup when multi-kit data is available.
+For drones observed by 2+ kits, you can estimate the drone's location using RSSI-based trilateration. This is particularly useful for **encrypted drones** (like DJI encrypted DroneID) where the drone broadcasts a unique identifier but no GPS position.
 
 ### How It Works
 
@@ -123,9 +123,42 @@ For drones observed by 2+ kits, you can estimate the drone's location using RSSI
 3. The system:
    - Retrieves RSSI values from each observing kit
    - Gets kit GPS positions from system health data
-   - Calculates weighted centroid (stronger signals = higher weight)
+   - **Converts RSSI to estimated distance** using log-distance path loss model
+   - **Trilaterates** to find the position that best fits all distance estimates
    - Displays estimated location with confidence radius
-   - Calculates spoofing score by comparing reported vs estimated position
+   - If drone has reported GPS, calculates spoofing score by comparing positions
+
+### The Algorithm
+
+**RSSI to Distance Conversion:**
+
+Uses the standard [log-distance path loss model](https://en.wikipedia.org/wiki/Log-distance_path_loss_model) from RF engineering (Rappaport, "Wireless Communications: Principles and Practice"):
+
+```
+distance = 10^((TxPower - RSSI) / (10 * n))
+```
+
+Where:
+- `TxPower`: Transmitter power (default: 0 dBm)
+- `RSSI`: Received signal strength (e.g., -65 dBm)
+- `n`: Path loss exponent (default: 2.5 for outdoor line-of-sight)
+
+| Environment | Path Loss Exponent (n) |
+|-------------|------------------------|
+| Free space | 2.0 |
+| Outdoor (clear) | 2.0-2.5 |
+| Suburban | 2.5-3.0 |
+| Urban/obstructed | 3.0-4.0 |
+
+**Trilateration:**
+
+| Kits | Method | Description |
+|------|--------|-------------|
+| 1 kit | Single point | Returns kit position with distance as confidence radius |
+| 2 kits | Weighted line | Position along line between kits, weighted by inverse distance |
+| 3+ kits | Iterative trilateration | Gradient descent to find best-fit position |
+
+With 3+ kits, the algorithm iteratively adjusts the estimated position to minimize the error between calculated distances (from the estimate to each kit) and expected distances (from RSSI).
 
 ### Visualization
 

@@ -21,6 +21,7 @@ let activeFilters = {
     showUnusual: false,
     showRepeated: false,
     showCoordinated: false,
+    showMultikit: false,
     geoPolygon: null
 };
 let drawnItems;
@@ -1515,6 +1516,7 @@ function updateThreatCards() {
     // Update quick filter counts
     document.getElementById('unusual-count').textContent = activeThreatsCount;
     document.getElementById('repeated-count').textContent = repeatedCount;
+    document.getElementById('multikit-count').textContent = multiKitCount;
     document.getElementById('coordinated-count').textContent = patternData.coordinated.length;
 }
 
@@ -1697,9 +1699,20 @@ async function fetchKits() {
     }
 }
 
-// Update kit checkboxes
+// Update kit checkboxes - preserves user's checkbox selections
 function updateKitCheckboxes() {
     const container = document.getElementById('kit-checkboxes');
+
+    // Save current checkbox states before rebuilding
+    const previousStates = new Map();
+    const existingCheckboxes = container.querySelectorAll('input[type="checkbox"]');
+    existingCheckboxes.forEach(cb => {
+        if (cb.value !== 'all') {
+            previousStates.set(cb.value, cb.checked);
+        }
+    });
+    const hadPreviousKits = previousStates.size > 0;
+
     container.innerHTML = '<label><input type="checkbox" value="all" checked> All Kits</label>';
 
     if (!kits || kits.length === 0) {
@@ -1716,7 +1729,13 @@ function updateKitCheckboxes() {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.value = kit.kit_id;
-        checkbox.checked = true;
+
+        // Preserve previous state if it existed, otherwise default to checked
+        if (hadPreviousKits && previousStates.has(kit.kit_id)) {
+            checkbox.checked = previousStates.get(kit.kit_id);
+        } else {
+            checkbox.checked = true;  // New kits default to checked
+        }
 
         // Status indicator: online=green, stale=yellow, offline=red
         const statusDot = kit.status === 'online' ? '🟢' : kit.status === 'stale' ? '🟡' : '🔴';
@@ -1779,6 +1798,12 @@ function applyActiveFilters(data) {
         filtered = filtered.filter(d => coordinatedDrones.includes(d.drone_id));
     }
 
+    // Show multi-kit filter (drones seen by 2+ kits)
+    if (activeFilters.showMultikit) {
+        const multikitDrones = patternData.multiKit.map(m => m.drone_id);
+        filtered = filtered.filter(d => multikitDrones.includes(d.drone_id));
+    }
+
     // Geographic polygon filter
     if (activeFilters.geoPolygon) {
         filtered = filtered.filter(d => {
@@ -1807,9 +1832,24 @@ function isPointInPolygon(point, polygon) {
     return inside;
 }
 
+// Convert time_range to minutes for pattern APIs
+function timeRangeToMinutes(timeRange) {
+    const match = timeRange.match(/^(\d+)([mhd])$/);
+    if (!match) return 60;  // Default to 60 minutes
+    const value = parseInt(match[1]);
+    const unit = match[2];
+    switch (unit) {
+        case 'm': return value;
+        case 'h': return value * 60;
+        case 'd': return value * 24 * 60;
+        default: return 60;
+    }
+}
+
 // Fetch pattern data
 async function fetchPatterns() {
     const { filters } = getFilters();
+    const timeWindowMinutes = timeRangeToMinutes(filters.time_range || '1h');
 
     try {
         // Fetch all pattern endpoints
@@ -1824,6 +1864,13 @@ async function fetchPatterns() {
         const promises = endpoints.map(async (endpoint) => {
             try {
                 const params = new URLSearchParams(filters);
+                // Add time_window_minutes for endpoints that need it
+                if (endpoint === 'multi-kit') {
+                    params.set('time_window_minutes', Math.min(timeWindowMinutes, 10080));  // Max 7 days
+                }
+                if (endpoint === 'anomalies') {
+                    params.set('time_window_hours', Math.max(1, Math.ceil(timeWindowMinutes / 60)));
+                }
                 const response = await fetch(`/api/patterns/${endpoint}?${params}`);
                 if (response.ok) {
                     return await response.json();
@@ -1856,7 +1903,10 @@ async function fetchPatterns() {
 // crowded out by high-volume ADS-B aircraft data
 async function fetchData() {
     try {
-        showLoading(true);
+        // Only show loading overlay on first load to reduce visual flash
+        if (currentData.length === 0) {
+            showLoading(true);
+        }
 
         const { filters, showDrones, showAircraft } = getFilters();
 
@@ -1992,10 +2042,12 @@ function filterByThreatCard(cardType) {
     activeFilters.showUnusual = false;
     activeFilters.showRepeated = false;
     activeFilters.showCoordinated = false;
+    activeFilters.showMultikit = false;
 
     document.getElementById('filter-showUnusual').classList.remove('active');
     document.getElementById('filter-showRepeated').classList.remove('active');
     document.getElementById('filter-showCoordinated').classList.remove('active');
+    document.getElementById('filter-showMultikit').classList.remove('active');
 
     // Activate the selected filter
     if (cardType === 'unusual') {
@@ -2007,6 +2059,9 @@ function filterByThreatCard(cardType) {
     } else if (cardType === 'coordinated') {
         activeFilters.showCoordinated = true;
         document.getElementById('filter-showCoordinated').classList.add('active');
+    } else if (cardType === 'multikit') {
+        activeFilters.showMultikit = true;
+        document.getElementById('filter-showMultikit').classList.add('active');
     }
 
     const displayData = applyActiveFilters(currentData);

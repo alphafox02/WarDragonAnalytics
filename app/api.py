@@ -201,7 +201,8 @@ class LocationEstimate(BaseModel):
     error_meters: Optional[float] = None  # Distance from actual if known
     confidence_radius_m: float  # Estimated accuracy radius
     observations: List[dict]  # Kit observations used
-    algorithm: str = "weighted_centroid"
+    algorithm: str  # "single_kit", "two_kit_weighted", or "trilateration"
+    estimated_distances: Optional[List[dict]] = None  # [{"kit_id": str, "distance_m": float}, ...]
     # Spoofing detection fields
     spoofing_score: Optional[float] = None  # 0.0-1.0, higher = more suspicious
     spoofing_suspected: Optional[bool] = None  # True if score > threshold
@@ -1529,7 +1530,7 @@ async def get_anomalies(
 
 @app.get("/api/patterns/multi-kit")
 async def get_multi_kit_detections(
-    time_window_minutes: int = Query(15, description="Time window in minutes", ge=1, le=1440)
+    time_window_minutes: int = Query(15, description="Time window in minutes", ge=1, le=10080)
 ):
     """
     Find drones detected by multiple kits.
@@ -1543,10 +1544,12 @@ async def get_multi_kit_detections(
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     try:
+        # Query finds drones detected by multiple kits and returns ONE entry per kit
+        # (the most recent observation from each kit for meaningful time comparison)
         query = """
             WITH recent_detections AS (
+                -- Get all detections in the time window
                 SELECT
-                    time_bucket(make_interval(mins => $1), time) AS bucket,
                     drone_id,
                     kit_id,
                     lat,
@@ -1561,11 +1564,30 @@ async def get_multi_kit_detections(
                 WHERE time >= NOW() - make_interval(mins => $1)
                     AND lat IS NOT NULL
                     AND lon IS NOT NULL
+                    AND kit_id IS NOT NULL
+            ),
+            latest_per_kit AS (
+                -- For each (drone_id, kit_id), get only the MOST RECENT observation
+                -- This ensures times are close together for meaningful comparison
+                SELECT DISTINCT ON (drone_id, kit_id)
+                    drone_id,
+                    kit_id,
+                    lat,
+                    lon,
+                    alt,
+                    freq,
+                    rssi,
+                    time,
+                    rid_make,
+                    rid_model
+                FROM recent_detections
+                ORDER BY drone_id, kit_id, time DESC, rssi DESC NULLS LAST
             ),
             multi_kit_groups AS (
+                -- Group by drone and aggregate unique kits
                 SELECT
                     drone_id,
-                    COUNT(DISTINCT kit_id) AS kit_count,
+                    COUNT(*) AS kit_count,
                     json_agg(
                         json_build_object(
                             'kit_id', kit_id,
@@ -1575,18 +1597,19 @@ async def get_multi_kit_detections(
                             'lat', lat,
                             'lon', lon,
                             'alt', alt
-                        ) ORDER BY rssi DESC
+                        ) ORDER BY rssi DESC NULLS LAST
                     ) AS kits,
                     MAX(rid_make) AS rid_make,
                     MAX(rid_model) AS rid_model,
                     MAX(time) AS latest_detection
-                FROM recent_detections
+                FROM latest_per_kit
                 GROUP BY drone_id
-                HAVING COUNT(DISTINCT kit_id) >= 2
+                HAVING COUNT(*) >= 2
             )
             SELECT
                 drone_id,
                 kits,
+                kit_count,
                 (kit_count >= 3) AS triangulation_possible,
                 rid_make,
                 rid_model,
@@ -1599,7 +1622,18 @@ async def get_multi_kit_detections(
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(query, time_window_minutes)
 
-        results = [dict(row) for row in rows]
+        # Parse the kits JSON field (asyncpg returns json_agg as string)
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            # Parse kits JSON string to actual array
+            if isinstance(row_dict.get('kits'), str):
+                import json
+                try:
+                    row_dict['kits'] = json.loads(row_dict['kits'])
+                except json.JSONDecodeError:
+                    row_dict['kits'] = []
+            results.append(row_dict)
 
         return {
             "multi_kit_detections": results,
@@ -1744,93 +1778,231 @@ def calculate_spoofing_score(error_meters: float, confidence_radius_m: float, nu
     }
 
 
+def rssi_to_distance_meters(rssi: float, tx_power: float = 0, path_loss_exp: float = 2.5) -> float:
+    """
+    Convert RSSI to estimated distance using log-distance path loss model.
+
+    Formula: RSSI = TxPower - 10 * n * log10(d)
+    Rearranged: d = 10^((TxPower - RSSI) / (10 * n))
+
+    Args:
+        rssi: Received signal strength in dBm (e.g., -65)
+        tx_power: Transmitter power in dBm (default 0 dBm for drone)
+        path_loss_exp: Path loss exponent (2.0=free space, 2.5-3.0=outdoor, 4.0=indoor)
+
+    Returns:
+        Estimated distance in meters
+    """
+    if rssi is None or rssi >= tx_power:
+        return 10  # Minimum distance if signal is very strong or invalid
+
+    # Calculate distance
+    exponent = (tx_power - rssi) / (10 * path_loss_exp)
+    distance = math.pow(10, exponent)
+
+    # Clamp to reasonable range (10m to 10km)
+    return max(10, min(10000, distance))
+
+
 def estimate_location_from_rssi(observations: List[dict]) -> dict:
     """
-    Estimate drone location using weighted centroid algorithm based on RSSI values.
+    Estimate drone location using RSSI-based trilateration from kit positions.
 
-    Each kit's position is weighted by its signal strength (RSSI).
-    Stronger signals (less negative RSSI) indicate the kit is closer to the drone.
+    This algorithm estimates where a drone is located based on:
+    - Kit positions (where the receivers are located)
+    - RSSI values (signal strength from each kit)
+
+    The algorithm:
+    1. Converts RSSI to estimated distance from each kit
+    2. For 2 kits: Uses weighted position along the line between kits
+    3. For 3+ kits: Uses iterative trilateration to find best-fit position
+
+    This is the core algorithm for:
+    - Encrypted drones (no GPS broadcast, only RSSI/freq available)
+    - Spoofing detection (compare estimated vs reported position)
 
     Args:
         observations: List of dicts with keys: kit_lat, kit_lon, rssi
 
     Returns:
-        dict with estimated lat/lon and confidence radius
+        dict with estimated lat/lon, confidence radius, and distance estimates
     """
     if not observations:
         return None
 
-    # Filter observations with valid kit positions
+    # Filter valid observations with kit positions
     valid_obs = [o for o in observations if o.get('kit_lat') and o.get('kit_lon')]
 
     if not valid_obs:
         return None
 
-    # If only one observation, return kit position with large uncertainty
     if len(valid_obs) == 1:
+        # Single kit - can only say "drone is somewhere near this kit"
         obs = valid_obs[0]
+        dist = rssi_to_distance_meters(obs.get('rssi', -70))
         return {
             "lat": obs['kit_lat'],
             "lon": obs['kit_lon'],
-            "confidence_radius_m": 2000,  # Large radius for single observation
-            "method": "single_kit"
+            "confidence_radius_m": round(dist),
+            "method": "single_kit",
+            "estimated_distances": [{"kit_id": obs.get('kit_id'), "distance_m": round(dist)}]
         }
 
-    # Calculate weighted centroid
-    total_weight = 0
-    weighted_lat = 0
-    weighted_lon = 0
+    if len(valid_obs) == 2:
+        # Two kits - estimate position along line between them
+        return _trilaterate_2_kits(valid_obs)
 
-    weights = []
-    for obs in valid_obs:
-        rssi = obs.get('rssi')
-        weight = rssi_to_weight(rssi)
-        weights.append(weight)
+    # Three or more kits - proper trilateration
+    return _trilaterate_3plus_kits(valid_obs)
 
-        weighted_lat += obs['kit_lat'] * weight
-        weighted_lon += obs['kit_lon'] * weight
-        total_weight += weight
 
-    if total_weight == 0:
-        return None
+def _trilaterate_2_kits(observations: List[dict]) -> dict:
+    """
+    Estimate location with 2 kits using distance-weighted positioning.
 
-    est_lat = weighted_lat / total_weight
-    est_lon = weighted_lon / total_weight
+    With only 2 reference points, we can't solve for a unique position.
+    We estimate a point along the line between the kits, weighted by
+    the inverse of estimated distances (closer kit pulls the estimate toward it).
+    """
+    obs1, obs2 = observations[0], observations[1]
 
-    # Calculate confidence radius based on:
-    # 1. Spread of kit positions (larger spread = more uncertainty)
-    # 2. Signal strength variance (larger variance = more uncertainty)
-    # 3. Number of observations (more = less uncertainty)
+    # Get kit positions
+    lat1, lon1 = obs1['kit_lat'], obs1['kit_lon']
+    lat2, lon2 = obs2['kit_lat'], obs2['kit_lon']
 
-    # Kit position spread
-    max_dist = 0
-    for i, obs1 in enumerate(valid_obs):
-        for obs2 in valid_obs[i+1:]:
-            dist = calculate_distance_meters(
-                obs1['kit_lat'], obs1['kit_lon'],
-                obs2['kit_lat'], obs2['kit_lon']
-            )
-            max_dist = max(max_dist, dist)
+    # Estimate distances from RSSI
+    dist1 = rssi_to_distance_meters(obs1.get('rssi', -70))
+    dist2 = rssi_to_distance_meters(obs2.get('rssi', -70))
 
-    # Base confidence radius is half the max kit separation
-    # (drone is somewhere between kits)
-    base_radius = max_dist / 2 if max_dist > 0 else 500
+    # Calculate distance between kits
+    kit_separation = calculate_distance_meters(lat1, lon1, lat2, lon2)
 
-    # Adjust by number of observations (more obs = more confidence)
-    obs_factor = 1.5 / len(valid_obs)  # Decreases with more observations
+    if kit_separation < 10:
+        # Kits too close together - use midpoint
+        return {
+            "lat": (lat1 + lat2) / 2,
+            "lon": (lon1 + lon2) / 2,
+            "confidence_radius_m": round(max(dist1, dist2)),
+            "method": "two_kit_midpoint",
+            "estimated_distances": [
+                {"kit_id": obs1.get('kit_id'), "distance_m": round(dist1)},
+                {"kit_id": obs2.get('kit_id'), "distance_m": round(dist2)}
+            ]
+        }
 
-    # Adjust by RSSI quality (stronger signals = more confidence)
-    avg_rssi = sum(o.get('rssi', -90) or -90 for o in valid_obs) / len(valid_obs)
-    rssi_factor = 1.0 + ((-avg_rssi - 50) / 50)  # -50dBm = 1.0, -100dBm = 2.0
+    # Weight by inverse distance (closer = higher weight)
+    w1 = 1.0 / (dist1 + 1)
+    w2 = 1.0 / (dist2 + 1)
+    total_weight = w1 + w2
 
-    confidence_radius = base_radius * obs_factor * rssi_factor
-    confidence_radius = max(50, min(5000, confidence_radius))  # Clamp to 50-5000m
+    # Weighted position along the line between kits
+    est_lat = (lat1 * w1 + lat2 * w2) / total_weight
+    est_lon = (lon1 * w1 + lon2 * w2) / total_weight
+
+    # Confidence radius - larger uncertainty with only 2 kits
+    # Could be on either side of the line between kits
+    avg_dist = (dist1 + dist2) / 2
+    confidence_radius = max(100, min(avg_dist * 0.5, kit_separation / 2))
 
     return {
         "lat": est_lat,
         "lon": est_lon,
         "confidence_radius_m": round(confidence_radius, 1),
-        "method": "weighted_centroid"
+        "method": "two_kit_weighted",
+        "estimated_distances": [
+            {"kit_id": obs1.get('kit_id'), "distance_m": round(dist1)},
+            {"kit_id": obs2.get('kit_id'), "distance_m": round(dist2)}
+        ],
+        "kit_separation_m": round(kit_separation)
+    }
+
+
+def _trilaterate_3plus_kits(observations: List[dict]) -> dict:
+    """
+    Estimate location with 3+ kits using iterative trilateration.
+
+    With 3+ reference points, we can solve for the drone position.
+    Uses gradient descent to find the point that minimizes
+    the sum of squared errors between estimated and actual distances.
+    """
+    # Extract kit positions and estimated distances
+    kits = []
+    for obs in observations:
+        dist = rssi_to_distance_meters(obs.get('rssi', -70))
+        kits.append({
+            'lat': obs['kit_lat'],
+            'lon': obs['kit_lon'],
+            'dist': dist,
+            'kit_id': obs.get('kit_id')
+        })
+
+    # Initial guess: centroid of kit positions weighted by inverse distance
+    total_weight = sum(1.0 / (k['dist'] + 1) for k in kits)
+    est_lat = sum(k['lat'] / (k['dist'] + 1) for k in kits) / total_weight
+    est_lon = sum(k['lon'] / (k['dist'] + 1) for k in kits) / total_weight
+
+    # Iterative refinement using gradient descent
+    # Convert to approximate meters for gradient calculation
+    # ~111km per degree latitude, ~85km per degree longitude at mid-latitudes
+    meters_per_deg_lat = 111000
+    meters_per_deg_lon = 85000
+
+    learning_rate = 0.5  # Step size in meters equivalent
+
+    for iteration in range(200):
+        grad_lat = 0
+        grad_lon = 0
+
+        for kit in kits:
+            # Current distance from estimate to this kit
+            current_dist = calculate_distance_meters(est_lat, est_lon, kit['lat'], kit['lon'])
+            if current_dist < 1:
+                current_dist = 1
+
+            # Error: difference between current distance and expected distance
+            error = current_dist - kit['dist']
+
+            # Direction from estimate to kit (in degrees)
+            dlat = kit['lat'] - est_lat
+            dlon = kit['lon'] - est_lon
+
+            # Gradient: move toward kit if we're too far, away if too close
+            # Normalize by current distance
+            grad_lat += error * dlat / current_dist
+            grad_lon += error * dlon / current_dist
+
+        # Update position (move in direction that reduces error)
+        # Scale by learning rate and convert to degrees
+        est_lat += (learning_rate * grad_lat) / meters_per_deg_lat
+        est_lon += (learning_rate * grad_lon) / meters_per_deg_lon
+
+        # Reduce learning rate over iterations for convergence
+        if iteration > 50:
+            learning_rate *= 0.99
+
+    # Calculate final errors
+    errors = []
+    for kit in kits:
+        actual_dist = calculate_distance_meters(est_lat, est_lon, kit['lat'], kit['lon'])
+        error = abs(actual_dist - kit['dist'])
+        errors.append(error)
+
+    # Confidence radius based on mean error and number of kits
+    mean_error = sum(errors) / len(errors)
+    # More kits = more confidence
+    confidence_factor = 2.0 / len(kits)  # 3 kits = 0.67, 4 kits = 0.5
+    confidence_radius = mean_error * confidence_factor + 50  # Base 50m minimum
+    confidence_radius = max(50, min(2000, confidence_radius))
+
+    return {
+        "lat": est_lat,
+        "lon": est_lon,
+        "confidence_radius_m": round(confidence_radius, 1),
+        "method": "trilateration",
+        "estimated_distances": [
+            {"kit_id": k['kit_id'], "distance_m": round(k['dist'])} for k in kits
+        ],
+        "mean_error_m": round(mean_error, 1)
     }
 
 
@@ -2016,6 +2188,7 @@ async def estimate_drone_location(
             confidence_radius_m=estimate['confidence_radius_m'],
             observations=observations,
             algorithm=estimate['method'],
+            estimated_distances=estimate.get('estimated_distances'),
             spoofing_score=spoofing_result['spoofing_score'],
             spoofing_suspected=spoofing_result['spoofing_suspected'],
             spoofing_reason=spoofing_result['spoofing_reason']

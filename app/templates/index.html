@@ -157,7 +157,11 @@
                     <span>Show Repeated</span>
                     <span id="repeated-count" class="count">0</span>
                 </button>
-                <button id="filter-showCoordinated" class="quick-filter-btn" onclick="toggleQuickFilter('showCoordinated')">
+                <button id="filter-showMultikit" class="quick-filter-btn" onclick="toggleQuickFilter('showMultikit')">
+                    <span>Show Multi-Kit</span>
+                    <span id="multikit-count" class="count">0</span>
+                </button>
+                <button id="filter-showCoordinated" class="quick-filter-btn" onclick="toggleQuickFilter('showCoordinated')" title="Drones flying in coordinated patterns">
                     <span>Show Coordinated</span>
                     <span id="coordinated-count" class="count">0</span>
                 </button>
@@ -279,7 +283,7 @@
                     <div id="repeated-contacts" class="threat-card-value">0</div>
                     <div class="threat-card-detail">Drones seen 2+ times</div>
                 </div>
-                <div class="threat-card" onclick="filterByThreatCard('coordinated')">
+                <div class="threat-card" onclick="filterByThreatCard('multikit')">
                     <div class="threat-card-label">Multi-Kit Detections</div>
                     <div id="multi-kit-detections" class="threat-card-value">0</div>
                     <div class="threat-card-detail">Drones seen by 2+ kits</div>
