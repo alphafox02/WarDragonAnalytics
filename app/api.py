@@ -12,7 +12,7 @@ Enterprise Features (Optional):
 
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from pathlib import Path
 
@@ -338,10 +338,15 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
 
         # Build dict of registered kits
         kits_dict = {}
+        now = datetime.now(timezone.utc)
         for row in rows:
             kit = dict(row)
             if kit["last_seen"]:
-                time_since_seen = (datetime.utcnow() - kit["last_seen"]).total_seconds()
+                # Handle both timezone-aware and naive datetimes from DB
+                last_seen = kit["last_seen"]
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+                time_since_seen = (now - last_seen).total_seconds()
                 if time_since_seen < 30:
                     kit["status"] = "online"
                 elif time_since_seen < 120:
@@ -369,7 +374,12 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                 if discovered_kit_id and discovered_kit_id not in kits_dict:
                     # Create a discovered kit entry
                     last_seen = row["last_seen"]
-                    time_since_seen = (datetime.utcnow() - last_seen).total_seconds() if last_seen else float('inf')
+                    if last_seen:
+                        if last_seen.tzinfo is None:
+                            last_seen = last_seen.replace(tzinfo=timezone.utc)
+                        time_since_seen = (now - last_seen).total_seconds()
+                    else:
+                        time_since_seen = float('inf')
 
                     if time_since_seen < 30:
                         status = "online"
