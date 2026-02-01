@@ -224,6 +224,11 @@ style.textContent = `
         border-radius: 50%;
         border: 1px solid rgba(255,255,255,0.5);
     }
+
+    /* Flight path polyline styling - make it pop! */
+    .flight-path-line {
+        filter: drop-shadow(0 0 3px rgba(0,0,0,0.5));
+    }
 `;
 document.head.appendChild(style);
 
@@ -679,13 +684,25 @@ async function showFlightPath(droneId) {
         const kitIndex = drone ? kits.findIndex(k => k.kit_id === drone.kit_id) : 0;
         const baseColor = KIT_COLORS[kitIndex % KIT_COLORS.length];
 
-        // Create flight path polyline
+        // Create flight path with outline for better visibility
         const trackPoints = data.track.map(p => [p.lat, p.lon]);
+
+        // Dark outline underneath (creates border effect)
+        const outlinePolyline = L.polyline(trackPoints, {
+            color: '#000000',
+            weight: 7,
+            opacity: 0.6,
+            lineCap: 'round',
+            lineJoin: 'round'
+        }).addTo(map);
+
+        // Main colored line on top
         const polyline = L.polyline(trackPoints, {
             color: baseColor,
-            weight: 3,
-            opacity: 0.8,
-            dashArray: null,  // Solid line for flight path
+            weight: 4,
+            opacity: 0.9,
+            lineCap: 'round',
+            lineJoin: 'round',
             className: 'flight-path-line'
         }).addTo(map);
 
@@ -704,12 +721,12 @@ async function showFlightPath(droneId) {
             const opacity = 0.3 + (0.5 * (index / data.track.length));
 
             const breadcrumb = L.circleMarker([point.lat, point.lon], {
-                radius: 4,
+                radius: 6,
                 fillColor: baseColor,
                 fillOpacity: opacity,
-                color: '#fff',
-                weight: 1,
-                opacity: opacity
+                color: '#000',
+                weight: 2,
+                opacity: 0.8
             }).addTo(map);
 
             // Add tooltip with time
@@ -724,10 +741,10 @@ async function showFlightPath(droneId) {
         // Add start point marker (green)
         const startPoint = data.track[0];
         const startMarker = L.circleMarker([startPoint.lat, startPoint.lon], {
-            radius: 6,
+            radius: 8,
             fillColor: '#00ff00',
             fillOpacity: 0.9,
-            color: '#fff',
+            color: '#000',
             weight: 2
         }).addTo(map);
         startMarker.bindTooltip(`Start: ${formatTime(startPoint.time)}`, {
@@ -739,6 +756,7 @@ async function showFlightPath(droneId) {
         // Store flight path data
         flightPaths[droneId] = {
             polyline: polyline,
+            outlinePolyline: outlinePolyline,
             markers: breadcrumbMarkers,
             pointCount: data.track.length
         };
@@ -758,9 +776,12 @@ async function showFlightPath(droneId) {
 function hideFlightPath(droneId) {
     const pathData = flightPaths[droneId];
     if (pathData) {
-        // Remove polyline
+        // Remove polylines (main and outline)
         if (pathData.polyline) {
             map.removeLayer(pathData.polyline);
+        }
+        if (pathData.outlinePolyline) {
+            map.removeLayer(pathData.outlinePolyline);
         }
         // Remove breadcrumb markers
         if (pathData.markers) {
