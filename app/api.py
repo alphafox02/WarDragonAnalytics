@@ -352,13 +352,13 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                 kit["status"] = "unknown"
             kits_dict[kit["kit_id"]] = kit
 
-        # Also discover kits from drone data (last 24h) that aren't registered
+        # Also discover kits from drone data (last 7 days) that aren't registered
         # This catches kits that have data but weren't formally registered
         if not kit_id:
             discovered_query = """
                 SELECT DISTINCT kit_id, MAX(time) as last_seen
                 FROM drones
-                WHERE time > NOW() - INTERVAL '24 hours'
+                WHERE time > NOW() - INTERVAL '7 days'
                   AND kit_id IS NOT NULL
                 GROUP BY kit_id
             """
