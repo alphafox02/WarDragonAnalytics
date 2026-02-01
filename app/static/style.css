@@ -309,6 +309,31 @@ body.light-theme .threat-card {
     margin-right: 8px;
 }
 
+/* Kit checkboxes scrollable container for many kits */
+#kit-checkboxes {
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+#kit-checkboxes::-webkit-scrollbar {
+    width: 6px;
+}
+
+#kit-checkboxes::-webkit-scrollbar-track {
+    background: #2a2a2a;
+    border-radius: 3px;
+}
+
+#kit-checkboxes::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+#kit-checkboxes::-webkit-scrollbar-thumb:hover {
+    background: #00ff00;
+}
+
 /* Quick Filters */
 .quick-filters {
     display: flex;
