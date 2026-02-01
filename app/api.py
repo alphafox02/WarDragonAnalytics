@@ -289,7 +289,7 @@ def parse_time_range(time_range: str) -> tuple[datetime, datetime]:
 
 
 async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
-    """Get status of configured kits."""
+    """Get status of configured kits, including kits discovered from drone data."""
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
 
@@ -302,6 +302,7 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
             )
         """)
 
+        # Get registered kits from kits table
         if kit_id:
             if source_exists:
                 query = """
@@ -335,8 +336,8 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                 """
             rows = await conn.fetch(query)
 
-        # Calculate status based on last_seen
-        kits = []
+        # Build dict of registered kits
+        kits_dict = {}
         for row in rows:
             kit = dict(row)
             if kit["last_seen"]:
@@ -349,8 +350,47 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                     kit["status"] = "offline"
             else:
                 kit["status"] = "unknown"
-            kits.append(kit)
+            kits_dict[kit["kit_id"]] = kit
 
+        # Also discover kits from drone data (last 24h) that aren't registered
+        # This catches kits that have data but weren't formally registered
+        if not kit_id:
+            discovered_query = """
+                SELECT DISTINCT kit_id, MAX(time) as last_seen
+                FROM drones
+                WHERE time > NOW() - INTERVAL '24 hours'
+                  AND kit_id IS NOT NULL
+                GROUP BY kit_id
+            """
+            discovered_rows = await conn.fetch(discovered_query)
+
+            for row in discovered_rows:
+                discovered_kit_id = row["kit_id"]
+                if discovered_kit_id and discovered_kit_id not in kits_dict:
+                    # Create a discovered kit entry
+                    last_seen = row["last_seen"]
+                    time_since_seen = (datetime.utcnow() - last_seen).total_seconds() if last_seen else float('inf')
+
+                    if time_since_seen < 30:
+                        status = "online"
+                    elif time_since_seen < 120:
+                        status = "stale"
+                    else:
+                        status = "offline"
+
+                    kits_dict[discovered_kit_id] = {
+                        "kit_id": discovered_kit_id,
+                        "name": f"Discovered: {discovered_kit_id}",
+                        "location": None,
+                        "api_url": None,
+                        "last_seen": last_seen,
+                        "status": status,
+                        "created_at": None,
+                        "source": "discovered"  # Special source indicating auto-discovered from data
+                    }
+
+        # Sort by name and return as list
+        kits = sorted(kits_dict.values(), key=lambda k: k.get("name") or k.get("kit_id") or "")
         return kits
 
 

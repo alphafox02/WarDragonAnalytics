@@ -1168,12 +1168,14 @@ function updateKitCheckboxes() {
 
         // Status indicator: online=green, stale=yellow, offline=red
         const statusDot = kit.status === 'online' ? '🟢' : kit.status === 'stale' ? '🟡' : '🔴';
-        // Source indicator for MQTT vs HTTP kits
-        const sourceTag = kit.source === 'mqtt' ? ' [M]' : kit.source === 'hybrid' ? ' [H]' : '';
+        // Source indicator: M=MQTT, H=Hybrid, D=Discovered from drone data
+        const sourceTag = kit.source === 'mqtt' ? ' [M]' :
+                         kit.source === 'hybrid' ? ' [H]' :
+                         kit.source === 'discovered' ? ' [D]' : '';
 
         label.appendChild(checkbox);
         label.appendChild(document.createTextNode(` ${statusDot} ${kit.name || kit.kit_id}${sourceTag}`));
-        label.title = `Status: ${kit.status || 'unknown'}, Source: ${kit.source || 'http'}`;
+        label.title = `Status: ${kit.status || 'unknown'}, Source: ${kit.source || 'http'}\n[M]=MQTT, [H]=Hybrid, [D]=Discovered from data`;
         container.appendChild(label);
     });
 }
