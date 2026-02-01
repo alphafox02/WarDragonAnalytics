@@ -46,6 +46,24 @@ const KIT_COLORS = [
     '#ff8844', '#8844ff', '#44ff88', '#ff4488', '#88ff44', '#4488ff'
 ];
 
+// Get consistent color for a kit_id using hash
+// This ensures the same kit always gets the same color, even before it's in the kits list
+function getKitColor(kitId) {
+    if (!kitId) return KIT_COLORS[0];
+
+    // Simple hash function for string -> number
+    let hash = 0;
+    for (let i = 0; i < kitId.length; i++) {
+        const char = kitId.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+    }
+
+    // Use absolute value and mod to get color index
+    const index = Math.abs(hash) % KIT_COLORS.length;
+    return KIT_COLORS[index];
+}
+
 // Pattern colors
 const PATTERN_COLORS = {
     coordinated: '#ffaa00',
@@ -452,8 +470,8 @@ function updateMap(data) {
             if (!track || typeof track !== 'object') return;
             if (track.lat == null || track.lon == null || isNaN(track.lat) || isNaN(track.lon)) return;
 
-            const kitIndex = Array.isArray(kits) ? kits.findIndex(k => k && k.kit_id === track.kit_id) : -1;
-            const color = KIT_COLORS[Math.max(0, kitIndex) % KIT_COLORS.length];
+            // Use hash-based color for consistent kit coloring
+            const color = getKitColor(track.kit_id);
 
             // Check for special statuses - with defensive checks
             const droneId = track.drone_id || 'unknown';
@@ -697,10 +715,9 @@ async function showFlightPath(droneId) {
             return;
         }
 
-        // Get kit color for this drone
+        // Get kit color for this drone (hash-based for consistency)
         const drone = currentData.find(d => d.drone_id === droneId);
-        const kitIndex = drone ? kits.findIndex(k => k.kit_id === drone.kit_id) : 0;
-        const baseColor = KIT_COLORS[kitIndex % KIT_COLORS.length];
+        const baseColor = getKitColor(drone?.kit_id);
 
         // Create flight path with outline for better visibility
         const trackPoints = data.track.map(p => [p.lat, p.lon]);
@@ -1133,6 +1150,15 @@ function updateKitCheckboxes() {
     const container = document.getElementById('kit-checkboxes');
     container.innerHTML = '<label><input type="checkbox" value="all" checked> All Kits</label>';
 
+    if (!kits || kits.length === 0) {
+        const noKitsMsg = document.createElement('div');
+        noKitsMsg.className = 'no-kits-message';
+        noKitsMsg.style.cssText = 'font-size: 11px; color: #888; margin-top: 5px; font-style: italic;';
+        noKitsMsg.textContent = 'No kits registered yet. Add kits via Kits button or wait for MQTT data.';
+        container.appendChild(noKitsMsg);
+        return;
+    }
+
     kits.forEach(kit => {
         const label = document.createElement('label');
         const checkbox = document.createElement('input');
@@ -1140,10 +1166,14 @@ function updateKitCheckboxes() {
         checkbox.value = kit.kit_id;
         checkbox.checked = true;
 
+        // Status indicator: online=green, stale=yellow, offline=red
         const statusDot = kit.status === 'online' ? '🟢' : kit.status === 'stale' ? '🟡' : '🔴';
+        // Source indicator for MQTT vs HTTP kits
+        const sourceTag = kit.source === 'mqtt' ? ' [M]' : kit.source === 'hybrid' ? ' [H]' : '';
 
         label.appendChild(checkbox);
-        label.appendChild(document.createTextNode(` ${statusDot} ${kit.name || kit.kit_id}`));
+        label.appendChild(document.createTextNode(` ${statusDot} ${kit.name || kit.kit_id}${sourceTag}`));
+        label.title = `Status: ${kit.status || 'unknown'}, Source: ${kit.source || 'http'}`;
         container.appendChild(label);
     });
 }
@@ -1489,6 +1519,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Start alert check (every 5s)
     alertRefreshTimer = setInterval(checkForAlerts, 5000);
+
+    // Refresh kit list every 30s to pick up new MQTT kits
+    setInterval(fetchKits, 30000);
 });
 
 // Cleanup on page unload
