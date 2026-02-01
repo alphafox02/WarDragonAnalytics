@@ -29,6 +29,9 @@ let drawnItems;
 let flightPaths = {};  // Map of drone_id -> { polyline, markers }
 let activeFlightPath = null;  // Currently displayed flight path drone_id
 
+// Map view state - prevent auto-zoom after initial load
+let initialLoadComplete = false;
+
 // Pilot/Home location tracking
 let pilotMarkers = [];  // Pilot location markers
 let homeMarkers = [];   // Home location markers
@@ -567,11 +570,12 @@ function updateMap(data) {
         }
     });
 
-    // Auto-fit bounds if markers exist (only on first load, not during refresh)
+    // Auto-fit bounds only on first load - preserve user's zoom/pan during refresh
     try {
-        if (markers.length > 0 && !reopenPopupForDrone) {
+        if (markers.length > 0 && !initialLoadComplete) {
             const group = L.featureGroup(markers);
             map.fitBounds(group.getBounds().pad(0.1));
+            initialLoadComplete = true;  // Only fit bounds once
         }
     } catch (e) {
         console.warn('Error fitting map bounds:', e);
@@ -653,6 +657,20 @@ function togglePilotLocations(show) {
 function toggleHomeLocations(show) {
     showHomeLocations = show;
     updateMap(currentData);
+}
+
+// Fit map bounds to show all drones (manual trigger)
+function fitToAllDrones() {
+    if (markers.length === 0) {
+        console.log('No drones to fit to');
+        return;
+    }
+    try {
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.1));
+    } catch (e) {
+        console.warn('Error fitting map bounds:', e);
+    }
 }
 
 // =============================================================================
