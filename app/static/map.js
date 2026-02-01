@@ -40,6 +40,13 @@ let homeLines = [];     // Lines from drone to home
 let showPilotLocations = true;  // Toggle for pilot locations
 let showHomeLocations = true;   // Toggle for home locations
 
+// RSSI Location estimation tracking
+let estimationMarker = null;  // Estimated location marker
+let estimationCircle = null;  // Confidence radius circle
+let estimationErrorLine = null;  // Line from estimated to actual
+let estimationOverlay = null;  // Info overlay element
+let activeEstimation = null;  // Currently displayed estimation drone_id
+
 // Kit color mapping
 const KIT_COLORS = [
     '#ff4444', '#4444ff', '#44ff44', '#ffff44', '#ff44ff', '#44ffff',
@@ -62,6 +69,30 @@ function getKitColor(kitId) {
     // Use absolute value and mod to get color index
     const index = Math.abs(hash) % KIT_COLORS.length;
     return KIT_COLORS[index];
+}
+
+// Get kit name from kit_id, with fallback to kit_id if not found
+function getKitName(kitId) {
+    if (!kitId) return 'Unknown';
+    const kit = kits.find(k => k.kit_id === kitId);
+    return kit ? (kit.name || kitId) : kitId;
+}
+
+// Get signal strength bar visualization
+function getSignalBar(rssi) {
+    if (rssi == null || isNaN(rssi)) return '';
+    // Map RSSI to 0-5 bars: -40 to -55 = 5 bars, -56 to -70 = 4, -71 to -80 = 3, -81 to -90 = 2, -91+ = 1
+    let bars = 1;
+    let color = '#ff4444';  // Red (weak)
+    if (rssi >= -55) { bars = 5; color = '#44ff44'; }       // Green (excellent)
+    else if (rssi >= -65) { bars = 4; color = '#88ff44'; }  // Yellow-green (good)
+    else if (rssi >= -75) { bars = 3; color = '#ffff44'; }  // Yellow (fair)
+    else if (rssi >= -85) { bars = 2; color = '#ffaa44'; }  // Orange (weak)
+    // else 1 bar, red (very weak)
+
+    const filled = '▓'.repeat(bars);
+    const empty = '░'.repeat(5 - bars);
+    return `<span style="color: ${color}; font-family: monospace;">${filled}</span><span style="color: #444;">${empty}</span>`;
 }
 
 // Pattern colors
@@ -250,6 +281,81 @@ style.textContent = `
     .flight-path-line {
         filter: drop-shadow(0 0 3px rgba(0,0,0,0.5));
     }
+
+    /* RSSI Location estimation button and overlay */
+    .estimate-btn {
+        background: #aa88ff;
+        color: white;
+        width: 100%;
+        margin-top: 6px;
+    }
+    .estimate-btn:hover {
+        background: #9977ee;
+    }
+    .estimate-btn.active {
+        background: #ff8844;
+    }
+    .estimate-btn.active:hover {
+        background: #ee7733;
+    }
+    .estimate-btn:disabled {
+        background: #555;
+        cursor: not-allowed;
+        color: #888;
+    }
+
+    /* Estimation result overlay */
+    .estimate-overlay {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background: rgba(26, 26, 26, 0.95);
+        border: 1px solid #aa88ff;
+        border-radius: 8px;
+        padding: 12px 16px;
+        z-index: 1000;
+        max-width: 320px;
+        font-size: 12px;
+    }
+    .estimate-overlay h4 {
+        margin: 0 0 8px 0;
+        color: #aa88ff;
+        font-size: 13px;
+    }
+    .estimate-overlay .close-btn {
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        background: none;
+        border: none;
+        color: #888;
+        cursor: pointer;
+        font-size: 16px;
+    }
+    .estimate-overlay .close-btn:hover {
+        color: #fff;
+    }
+    .estimate-overlay .stat-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 4px 0;
+    }
+    .estimate-overlay .stat-label {
+        color: #888;
+    }
+    .estimate-overlay .stat-value {
+        color: #fff;
+        font-family: monospace;
+    }
+    .estimate-overlay .error-good { color: #44ff44; }
+    .estimate-overlay .error-fair { color: #ffff44; }
+    .estimate-overlay .error-poor { color: #ff8844; }
+    .estimate-overlay .error-bad { color: #ff4444; }
+    /* Spoofing detection classes */
+    .estimate-overlay .spoof-normal { color: #44ff44; }
+    .estimate-overlay .spoof-monitor { color: #ffff44; }
+    .estimate-overlay .spoof-suspicious { color: #ff8844; }
+    .estimate-overlay .spoof-likely { color: #ff4444; font-weight: bold; }
 `;
 document.head.appendChild(style);
 
@@ -287,12 +393,17 @@ function createPopup(track, options = {}) {
     const trackType = track.track_type || 'drone';
     const droneId = track.drone_id || 'Unknown';
     const kitId = track.kit_id || 'Unknown';
-    const { isWatchlist = false, isAnomaly = false, anomalyTypes = [], multiKitCount = 0 } = options || {};
+    const { isWatchlist = false, isAnomaly = false, anomalyTypes = [], multiKitCount = 0, multiKitData = [] } = options || {};
 
     let badges = '';
     if (isWatchlist) badges += '<span class="popup-badge watchlist">Watchlist</span> ';
     if (isAnomaly) badges += '<span class="popup-badge anomaly">Anomaly</span> ';
-    if (multiKitCount > 1) badges += `<span class="popup-badge multi-kit">Seen by ${multiKitCount} kits</span> `;
+    // Show triangulation indicator for 3+ kits
+    if (multiKitCount >= 3) {
+        badges += `<span class="popup-badge multi-kit triangulation">◎ ${multiKitCount} kits</span> `;
+    } else if (multiKitCount > 1) {
+        badges += `<span class="popup-badge multi-kit">${multiKitCount} kits</span> `;
+    }
 
     let anomalyInfo = '';
     if (anomalyTypes.length > 0) {
@@ -300,6 +411,37 @@ function createPopup(track, options = {}) {
             <div class="popup-row">
                 <span class="popup-label">Anomalies:</span>
                 <span class="popup-value">${anomalyTypes.join(', ')}</span>
+            </div>
+        `;
+    }
+
+    // Build multi-kit details section
+    let multiKitInfo = '';
+    if (multiKitCount > 1 && Array.isArray(multiKitData) && multiKitData.length > 0) {
+        // Sort by RSSI (strongest first - less negative is stronger)
+        const sortedKits = [...multiKitData].sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
+        const strongestRssi = sortedKits[0]?.rssi;
+
+        const kitRows = sortedKits.map((kit, idx) => {
+            const kitName = getKitName(kit.kit_id);
+            const rssi = kit.rssi != null ? kit.rssi : 'N/A';
+            const isStrongest = idx === 0 && rssi !== 'N/A';
+            const signalBar = rssi !== 'N/A' ? getSignalBar(rssi) : '';
+            const strongestTag = isStrongest ? ' <span style="color: #00ff00; font-size: 10px;">(strongest)</span>' : '';
+            return `<div class="multi-kit-row" style="margin-left: 10px; font-size: 11px;">
+                <span style="color: ${getKitColor(kit.kit_id)};">●</span> ${kitName}: ${rssi} dBm ${signalBar}${strongestTag}
+            </div>`;
+        }).join('');
+
+        const triangulationNote = multiKitCount >= 3
+            ? '<div style="font-size: 10px; color: #aa88ff; margin-top: 3px;">◎ Triangulation possible</div>'
+            : '';
+
+        multiKitInfo = `
+            <div class="popup-section multi-kit-section" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">
+                <div class="popup-label" style="margin-bottom: 4px;">Detected by ${multiKitCount} kits:</div>
+                ${kitRows}
+                ${triangulationNote}
             </div>
         `;
     }
@@ -356,16 +498,32 @@ function createPopup(track, options = {}) {
         ? `<button class="popup-btn flight-path-btn active" onclick="hideFlightPath('${escapedDroneId}')">Hide Flight Path</button>`
         : `<button class="popup-btn flight-path-btn" onclick="showFlightPath('${escapedDroneId}')">Show Flight Path</button>`;
 
+    // Check if estimation is currently shown for this drone
+    const hasEstimation = activeEstimation === droneId;
+    const escapedTimestamp = track.time ? track.time.replace(/'/g, "\\'") : '';
+    // Only show estimate button if there's multi-kit data (2+ kits)
+    let estimateBtn = '';
+    if (multiKitCount >= 2) {
+        estimateBtn = hasEstimation
+            ? `<button class="popup-btn estimate-btn active" onclick="clearEstimation()">Hide Estimation</button>`
+            : `<button class="popup-btn estimate-btn" data-drone-id="${escapedDroneId}" data-timestamp="${escapedTimestamp}" onclick="estimateLocation('${escapedDroneId}', '${escapedTimestamp}')">Estimate Location</button>`;
+    }
+
     // Safe formatting for numeric values
     const safeAlt = (track.alt != null && !isNaN(track.alt)) ? Number(track.alt).toFixed(1) : 'N/A';
     const safeSpeed = (track.speed != null && !isNaN(track.speed)) ? Number(track.speed).toFixed(1) : 'N/A';
     const safeRssi = track.rssi || 'N/A';
 
+    // Look up kit name from kits array
+    const kitName = getKitName(kitId);
+    const kitDisplay = kitName !== kitId ? `${kitName}` : kitId;
+    const kitTooltip = kitName !== kitId ? `ID: ${kitId}` : '';
+
     return `
         <div class="popup-title">${droneId} ${badges}</div>
         <div class="popup-row">
             <span class="popup-label">Kit:</span>
-            <span class="popup-value">${kitId}</span>
+            <span class="popup-value" ${kitTooltip ? `title="${kitTooltip}"` : ''}>${kitDisplay}</span>
         </div>
         <div class="popup-row">
             <span class="popup-label">Type:</span>
@@ -400,8 +558,10 @@ function createPopup(track, options = {}) {
             <span class="popup-value">${formatTime(track.time)}</span>
         </div>
         ${anomalyInfo}
+        ${multiKitInfo}
         <div class="popup-actions">
             ${flightPathBtn}
+            ${estimateBtn}
         </div>
     `;
 }
@@ -480,7 +640,8 @@ function updateMap(data) {
             const isAnomaly = !!anomaly;
             const anomalyTypes = (anomaly && Array.isArray(anomaly.anomaly_types)) ? anomaly.anomaly_types : [];
             const multiKit = Array.isArray(patternData.multiKit) ? patternData.multiKit.find(m => m && m.drone_id === droneId) : null;
-            const multiKitCount = (multiKit && multiKit.kit_count) ? multiKit.kit_count : 0;
+            const multiKitCount = (multiKit && Array.isArray(multiKit.kits)) ? multiKit.kits.length : 0;
+            const multiKitData = multiKit?.kits || [];  // Per-kit observation data
             const isCoordinated = Array.isArray(patternData.coordinated) && patternData.coordinated.some(g =>
                 g && Array.isArray(g.drone_ids) && g.drone_ids.includes(droneId)
             );
@@ -493,7 +654,7 @@ function updateMap(data) {
             });
 
             const marker = L.marker([track.lat, track.lon], { icon })
-                .bindPopup(createPopup(track, { isWatchlist, isAnomaly, anomalyTypes, multiKitCount }))
+                .bindPopup(createPopup(track, { isWatchlist, isAnomaly, anomalyTypes, multiKitCount, multiKitData }))
                 .addTo(map);
 
             markers.push(marker);
@@ -715,57 +876,140 @@ async function showFlightPath(droneId) {
             return;
         }
 
-        // Get kit color for this drone (hash-based for consistency)
-        const drone = currentData.find(d => d.drone_id === droneId);
-        const baseColor = getKitColor(drone?.kit_id);
+        // Analyze which kits observed this drone
+        const uniqueKits = [...new Set(data.track.map(p => p.kit_id).filter(k => k))];
+        const isMultiKit = uniqueKits.length > 1;
 
-        // Create flight path with outline for better visibility
-        const trackPoints = data.track.map(p => [p.lat, p.lon]);
-
-        // Dark outline underneath (creates border effect)
-        const outlinePolyline = L.polyline(trackPoints, {
-            color: '#000000',
-            weight: 7,
-            opacity: 0.6,
-            lineCap: 'round',
-            lineJoin: 'round'
-        }).addTo(map);
-
-        // Main colored line on top
-        const polyline = L.polyline(trackPoints, {
-            color: baseColor,
-            weight: 4,
-            opacity: 0.9,
-            lineCap: 'round',
-            lineJoin: 'round',
-            className: 'flight-path-line'
-        }).addTo(map);
-
-        // Add small circle markers for breadcrumbs (every few points to avoid clutter)
+        // Storage for polylines and markers
+        const polylines = [];
+        const outlinePolylines = [];
         const breadcrumbMarkers = [];
-        const step = Math.max(1, Math.floor(data.track.length / 20));  // Max ~20 breadcrumbs
+
+        if (isMultiKit) {
+            // Multi-kit: Create segments color-coded by kit
+            let currentKit = null;
+            let segmentPoints = [];
+
+            // First create a full outline for the entire path
+            const allPoints = data.track.map(p => [p.lat, p.lon]);
+            const fullOutline = L.polyline(allPoints, {
+                color: '#000000',
+                weight: 7,
+                opacity: 0.6,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(map);
+            outlinePolylines.push(fullOutline);
+
+            // Create color-coded segments by kit
+            data.track.forEach((point, index) => {
+                const kitId = point.kit_id || 'unknown';
+
+                if (currentKit !== kitId && segmentPoints.length > 0) {
+                    // Kit changed - draw the previous segment
+                    const segmentColor = getKitColor(currentKit);
+                    const segment = L.polyline(segmentPoints, {
+                        color: segmentColor,
+                        weight: 4,
+                        opacity: 0.9,
+                        lineCap: 'round',
+                        lineJoin: 'round',
+                        className: 'flight-path-line'
+                    }).addTo(map);
+                    segment.bindTooltip(`Observed by: ${getKitName(currentKit)}`, { sticky: true });
+                    polylines.push(segment);
+
+                    // Start new segment with overlap point for continuity
+                    segmentPoints = [segmentPoints[segmentPoints.length - 1]];
+                }
+
+                currentKit = kitId;
+                segmentPoints.push([point.lat, point.lon]);
+            });
+
+            // Draw final segment
+            if (segmentPoints.length > 1) {
+                const segmentColor = getKitColor(currentKit);
+                const segment = L.polyline(segmentPoints, {
+                    color: segmentColor,
+                    weight: 4,
+                    opacity: 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    className: 'flight-path-line'
+                }).addTo(map);
+                segment.bindTooltip(`Observed by: ${getKitName(currentKit)}`, { sticky: true });
+                polylines.push(segment);
+            }
+
+            // Add kit handoff markers (where kit changes)
+            let prevKit = data.track[0]?.kit_id;
+            data.track.forEach((point, index) => {
+                if (index > 0 && point.kit_id !== prevKit) {
+                    const handoffMarker = L.circleMarker([point.lat, point.lon], {
+                        radius: 8,
+                        fillColor: '#ffffff',
+                        fillOpacity: 0.9,
+                        color: '#000',
+                        weight: 2
+                    }).addTo(map);
+                    handoffMarker.bindTooltip(
+                        `Kit handoff: ${getKitName(prevKit)} → ${getKitName(point.kit_id)}<br>${formatTime(point.time)}`,
+                        { permanent: false, direction: 'top' }
+                    );
+                    breadcrumbMarkers.push(handoffMarker);
+                    prevKit = point.kit_id;
+                }
+            });
+        } else {
+            // Single-kit: Original behavior
+            const drone = currentData.find(d => d.drone_id === droneId);
+            const baseColor = getKitColor(drone?.kit_id);
+            const trackPoints = data.track.map(p => [p.lat, p.lon]);
+
+            // Dark outline underneath
+            const outlinePolyline = L.polyline(trackPoints, {
+                color: '#000000',
+                weight: 7,
+                opacity: 0.6,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(map);
+            outlinePolylines.push(outlinePolyline);
+
+            // Main colored line
+            const polyline = L.polyline(trackPoints, {
+                color: baseColor,
+                weight: 4,
+                opacity: 0.9,
+                lineCap: 'round',
+                lineJoin: 'round',
+                className: 'flight-path-line'
+            }).addTo(map);
+            polylines.push(polyline);
+        }
+
+        // Add breadcrumb markers (every Nth point)
+        const step = Math.max(1, Math.floor(data.track.length / 20));
 
         data.track.forEach((point, index) => {
-            // Skip first and last (current position already shown)
             if (index === 0 || index === data.track.length - 1) return;
-
-            // Only show every Nth point
             if (index % step !== 0) return;
 
-            // Calculate opacity based on age (older = more transparent)
             const opacity = 0.3 + (0.5 * (index / data.track.length));
+            const pointColor = getKitColor(point.kit_id);
 
             const breadcrumb = L.circleMarker([point.lat, point.lon], {
                 radius: 6,
-                fillColor: baseColor,
+                fillColor: pointColor,
                 fillOpacity: opacity,
                 color: '#000',
                 weight: 2,
                 opacity: 0.8
             }).addTo(map);
 
-            // Add tooltip with time
-            breadcrumb.bindTooltip(`${formatTime(point.time)}<br>Alt: ${point.alt?.toFixed(0) || 'N/A'}m`, {
+            const kitInfo = isMultiKit ? `<br>Kit: ${getKitName(point.kit_id)}` : '';
+            breadcrumb.bindTooltip(`${formatTime(point.time)}<br>Alt: ${point.alt?.toFixed(0) || 'N/A'}m${kitInfo}`, {
                 permanent: false,
                 direction: 'top'
             });
@@ -782,18 +1026,38 @@ async function showFlightPath(droneId) {
             color: '#000',
             weight: 2
         }).addTo(map);
-        startMarker.bindTooltip(`Start: ${formatTime(startPoint.time)}`, {
+        const startKitInfo = isMultiKit ? `<br>Kit: ${getKitName(startPoint.kit_id)}` : '';
+        startMarker.bindTooltip(`Start: ${formatTime(startPoint.time)}${startKitInfo}`, {
             permanent: false,
             direction: 'top'
         });
         breadcrumbMarkers.push(startMarker);
 
+        // Add legend for multi-kit paths
+        if (isMultiKit) {
+            const legendHtml = uniqueKits.map(kitId =>
+                `<span style="color: ${getKitColor(kitId)};">●</span> ${getKitName(kitId)}`
+            ).join('<br>');
+            const legendMarker = L.marker([startPoint.lat, startPoint.lon], {
+                icon: L.divIcon({
+                    className: 'flight-path-legend',
+                    html: `<div style="background: rgba(0,0,0,0.8); padding: 5px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap;">
+                        <strong style="color: #fff;">Kits (${uniqueKits.length}):</strong><br>${legendHtml}
+                    </div>`,
+                    iconAnchor: [-10, 0]
+                })
+            }).addTo(map);
+            breadcrumbMarkers.push(legendMarker);
+        }
+
         // Store flight path data
         flightPaths[droneId] = {
-            polyline: polyline,
-            outlinePolyline: outlinePolyline,
+            polylines: polylines,
+            outlinePolylines: outlinePolylines,
             markers: breadcrumbMarkers,
-            pointCount: data.track.length
+            pointCount: data.track.length,
+            isMultiKit: isMultiKit,
+            kits: uniqueKits
         };
         activeFlightPath = droneId;
 
@@ -811,11 +1075,16 @@ async function showFlightPath(droneId) {
 function hideFlightPath(droneId) {
     const pathData = flightPaths[droneId];
     if (pathData) {
-        // Remove polylines (main and outline)
-        if (pathData.polyline) {
+        // Remove polylines (may be array for multi-kit or single for legacy)
+        if (Array.isArray(pathData.polylines)) {
+            pathData.polylines.forEach(p => map.removeLayer(p));
+        } else if (pathData.polyline) {
             map.removeLayer(pathData.polyline);
         }
-        if (pathData.outlinePolyline) {
+        // Remove outline polylines
+        if (Array.isArray(pathData.outlinePolylines)) {
+            pathData.outlinePolylines.forEach(p => map.removeLayer(p));
+        } else if (pathData.outlinePolyline) {
             map.removeLayer(pathData.outlinePolyline);
         }
         // Remove breadcrumb markers
@@ -858,14 +1127,270 @@ function updatePopupForDrone(droneId) {
             const isAnomaly = !!anomaly;
             const anomalyTypes = anomaly ? anomaly.anomaly_types || [] : [];
             const multiKit = patternData.multiKit.find(m => m.drone_id === drone.drone_id);
-            const multiKitCount = multiKit ? multiKit.kit_count : 0;
+            const multiKitCount = (multiKit && Array.isArray(multiKit.kits)) ? multiKit.kits.length : 0;
+            const multiKitData = multiKit?.kits || [];
 
             // Update popup content
             marker.setPopupContent(createPopup(drone, {
-                isWatchlist, isAnomaly, anomalyTypes, multiKitCount
+                isWatchlist, isAnomaly, anomalyTypes, multiKitCount, multiKitData
             }));
         }
     });
+}
+
+// =============================================================================
+// RSSI-Based Location Estimation
+// =============================================================================
+
+// Request location estimation from API
+async function estimateLocation(droneId, timestamp) {
+    // Clear any existing estimation
+    clearEstimation();
+
+    // Update button to loading state
+    const btn = document.querySelector('.estimate-btn');
+    if (btn) {
+        btn.classList.add('loading');
+        btn.textContent = 'Estimating...';
+        btn.disabled = true;
+    }
+
+    try {
+        let url = `/api/analysis/estimate-location/${encodeURIComponent(droneId)}`;
+        if (timestamp) {
+            url += `?timestamp=${encodeURIComponent(timestamp)}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Estimation failed');
+        }
+
+        const result = await response.json();
+        displayEstimation(result);
+        activeEstimation = droneId;
+
+        // Update button state
+        if (btn) {
+            btn.classList.remove('loading');
+            btn.classList.add('active');
+            btn.textContent = 'Hide Estimation';
+            btn.disabled = false;
+            btn.onclick = () => clearEstimation();
+        }
+
+        console.log(`Estimated location for ${droneId}:`, result);
+    } catch (error) {
+        console.error('Estimation error:', error);
+        alert('Location estimation failed: ' + error.message);
+
+        // Reset button
+        if (btn) {
+            btn.classList.remove('loading');
+            btn.textContent = 'Estimate Location';
+            btn.disabled = false;
+        }
+    }
+}
+
+// Display estimation result on map
+function displayEstimation(result) {
+    const estimated = result.estimated;
+    const actual = result.actual;
+    const confidence = result.confidence_radius_m;
+    const errorMeters = result.error_meters;
+
+    // Create estimated location marker (dashed yellow circle)
+    const estimateIcon = L.divIcon({
+        className: 'estimate-marker',
+        html: `<div style="
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 200, 0, 0.3);
+            border: 3px dashed #ffcc00;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(255, 200, 0, 0.5);
+        "></div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+    });
+
+    estimationMarker = L.marker([estimated.lat, estimated.lon], { icon: estimateIcon })
+        .bindPopup(`
+            <div class="popup-title">Estimated Location</div>
+            <div class="popup-row">
+                <span class="popup-label">Position:</span>
+                <span class="popup-value">${estimated.lat.toFixed(6)}, ${estimated.lon.toFixed(6)}</span>
+            </div>
+            <div class="popup-row">
+                <span class="popup-label">Confidence:</span>
+                <span class="popup-value">${confidence.toFixed(0)}m radius</span>
+            </div>
+            ${errorMeters != null ? `
+            <div class="popup-row">
+                <span class="popup-label">Error:</span>
+                <span class="popup-value">${errorMeters.toFixed(1)}m from actual</span>
+            </div>
+            ` : ''}
+        `)
+        .addTo(map);
+
+    // Create confidence radius circle
+    estimationCircle = L.circle([estimated.lat, estimated.lon], {
+        radius: confidence,
+        color: '#ffcc00',
+        fillColor: '#ffcc00',
+        fillOpacity: 0.1,
+        weight: 2,
+        dashArray: '5, 5'
+    }).addTo(map);
+
+    // If we have actual position, draw error line
+    if (actual && actual.lat && actual.lon) {
+        estimationErrorLine = L.polyline([
+            [estimated.lat, estimated.lon],
+            [actual.lat, actual.lon]
+        ], {
+            color: '#ff4444',
+            weight: 2,
+            dashArray: '10, 5',
+            opacity: 0.8
+        }).addTo(map);
+    }
+
+    // Create info overlay
+    showEstimationOverlay(result);
+
+    // Zoom to show the estimation
+    const bounds = L.latLngBounds([
+        [estimated.lat, estimated.lon]
+    ]);
+    if (actual && actual.lat && actual.lon) {
+        bounds.extend([actual.lat, actual.lon]);
+    }
+    // Pad bounds to show confidence radius
+    map.fitBounds(bounds.pad(0.5));
+}
+
+// Show estimation info overlay
+function showEstimationOverlay(result) {
+    // Remove existing overlay
+    if (estimationOverlay) {
+        estimationOverlay.remove();
+    }
+
+    const errorMeters = result.error_meters;
+    let errorClass = 'error-good';
+    if (errorMeters != null) {
+        if (errorMeters > 500) errorClass = 'error-bad';
+        else if (errorMeters > 200) errorClass = 'error-poor';
+        else if (errorMeters > 100) errorClass = 'error-fair';
+    }
+
+    // Spoofing detection display
+    const spoofingScore = result.spoofing_score;
+    const spoofingSuspected = result.spoofing_suspected;
+    const spoofingReason = result.spoofing_reason;
+    let spoofingClass = 'spoof-normal';
+    let spoofingLabel = 'Normal';
+    if (spoofingScore != null) {
+        if (spoofingScore >= 0.7) {
+            spoofingClass = 'spoof-likely';
+            spoofingLabel = 'Likely Spoofing';
+        } else if (spoofingScore >= 0.5) {
+            spoofingClass = 'spoof-suspicious';
+            spoofingLabel = 'Suspicious';
+        } else if (spoofingScore >= 0.3) {
+            spoofingClass = 'spoof-monitor';
+            spoofingLabel = 'Monitor';
+        }
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'estimate-overlay';
+    overlay.innerHTML = `
+        <button class="close-btn" onclick="clearEstimation()">&times;</button>
+        <h4>Location Estimation</h4>
+        <div class="stat-row">
+            <span class="stat-label">Drone:</span>
+            <span class="stat-value">${result.drone_id}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Algorithm:</span>
+            <span class="stat-value">${result.algorithm}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Kits used:</span>
+            <span class="stat-value">${result.observations.length}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Confidence:</span>
+            <span class="stat-value">${result.confidence_radius_m.toFixed(0)}m</span>
+        </div>
+        ${errorMeters != null ? `
+        <div class="stat-row">
+            <span class="stat-label">Error:</span>
+            <span class="stat-value ${errorClass}">${errorMeters.toFixed(1)}m</span>
+        </div>
+        ` : `
+        <div class="stat-row">
+            <span class="stat-label">Error:</span>
+            <span class="stat-value">N/A (no actual position)</span>
+        </div>
+        `}
+        ${spoofingScore != null ? `
+        <div class="stat-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">
+            <span class="stat-label">Spoofing:</span>
+            <span class="stat-value ${spoofingClass}">${spoofingLabel} (${(spoofingScore * 100).toFixed(0)}%)</span>
+        </div>
+        ${spoofingReason ? `
+        <div style="font-size: 10px; color: #ff8800; margin-top: 4px;">
+            ${spoofingReason}
+        </div>
+        ` : ''}
+        ` : ''}
+        <div style="margin-top: 8px; font-size: 10px; color: #888;">
+            ${result.observations.map(o => `${getKitName(o.kit_id)}: ${o.rssi || 'N/A'} dBm`).join('<br>')}
+        </div>
+    `;
+
+    document.getElementById('map').appendChild(overlay);
+    estimationOverlay = overlay;
+}
+
+// Clear estimation display
+function clearEstimation() {
+    if (estimationMarker) {
+        map.removeLayer(estimationMarker);
+        estimationMarker = null;
+    }
+    if (estimationCircle) {
+        map.removeLayer(estimationCircle);
+        estimationCircle = null;
+    }
+    if (estimationErrorLine) {
+        map.removeLayer(estimationErrorLine);
+        estimationErrorLine = null;
+    }
+    if (estimationOverlay) {
+        estimationOverlay.remove();
+        estimationOverlay = null;
+    }
+
+    // Update button if it exists
+    const btn = document.querySelector('.estimate-btn');
+    if (btn) {
+        btn.classList.remove('active');
+        btn.textContent = 'Estimate Location';
+        const droneId = btn.getAttribute('data-drone-id');
+        const timestamp = btn.getAttribute('data-timestamp');
+        if (droneId) {
+            btn.onclick = () => estimateLocation(droneId, timestamp);
+        }
+    }
+
+    activeEstimation = null;
 }
 
 // =============================================================================
@@ -891,6 +1416,11 @@ function updateTable(data) {
         if (patternData.anomalies.some(a => a.drone_id === track.drone_id)) {
             row.classList.add('anomaly');
         }
+        // Check for multi-kit detection
+        const multiKitCheck = patternData.multiKit.find(m => m.drone_id === track.drone_id);
+        if (multiKitCheck && Array.isArray(multiKitCheck.kits) && multiKitCheck.kits.length > 1) {
+            row.classList.add('multi-kit');
+        }
 
         row.onclick = () => {
             if (track.lat != null && track.lon != null) {
@@ -904,9 +1434,31 @@ function updateTable(data) {
             }
         };
 
+        // Look up kit name and check for multi-kit
+        const kitName = getKitName(track.kit_id);
+        const multiKit = patternData.multiKit.find(m => m.drone_id === track.drone_id);
+        const multiKitCount = (multiKit && Array.isArray(multiKit.kits)) ? multiKit.kits.length : 0;
+
+        let kitDisplay = kitName !== track.kit_id ? kitName : track.kit_id;
+        let kitTooltip = kitName !== track.kit_id ? `ID: ${track.kit_id}` : '';
+
+        // Add multi-kit indicator
+        if (multiKitCount > 1) {
+            const otherKits = multiKit.kits
+                .filter(k => k.kit_id !== track.kit_id)
+                .map(k => getKitName(k.kit_id))
+                .join(', ');
+            kitDisplay += ` <span style="color: #4488ff; font-size: 10px;">+${multiKitCount - 1}</span>`;
+            kitTooltip = `Also seen by: ${otherKits}${kitTooltip ? '\n' + kitTooltip : ''}`;
+            if (multiKitCount >= 3) {
+                kitDisplay += ' <span style="color: #aa88ff; font-size: 10px;">◎</span>';
+                kitTooltip = '◎ Triangulation possible\n' + kitTooltip;
+            }
+        }
+
         row.innerHTML = `
             <td>${formatTime(track.time)}</td>
-            <td>${track.kit_id}</td>
+            <td ${kitTooltip ? `title="${kitTooltip}"` : ''}>${kitDisplay}</td>
             <td>${track.drone_id}</td>
             <td>${track.track_type || 'drone'}</td>
             <td>${track.rid_make || 'N/A'}</td>
@@ -1290,7 +1842,7 @@ async function fetchPatterns() {
         patternData.coordinated = results[1]?.groups || [];
         patternData.pilotReuse = results[2]?.pilots || [];
         patternData.anomalies = results[3]?.anomalies || [];
-        patternData.multiKit = results[4]?.drones || [];
+        patternData.multiKit = results[4]?.multi_kit_detections || [];
 
         updateThreatCards();
         checkForAlerts();

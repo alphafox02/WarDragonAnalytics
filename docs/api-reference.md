@@ -32,6 +32,7 @@ Complete reference documentation for all WarDragon Analytics REST API endpoints.
   - [Pilot Reuse](#pilot-reuse)
   - [Anomalies](#anomalies)
   - [Multi-Kit Detections](#multi-kit-detections)
+  - [RSSI Location Estimation](#rssi-location-estimation)
 - [Security Pattern Endpoints](#security-pattern-endpoints)
   - [Security Alerts](#security-alerts)
   - [Loitering Detection](#loitering-detection)
@@ -974,6 +975,145 @@ curl "http://localhost:8090/api/patterns/multi-kit?time_window_minutes=30"
 
 # Last hour
 curl "http://localhost:8090/api/patterns/multi-kit?time_window_minutes=60"
+```
+
+---
+
+### RSSI Location Estimation
+
+Estimate drone location using RSSI-based triangulation from multiple kits, with GPS spoofing detection.
+
+**Endpoint:** `GET /api/analysis/estimate-location/{drone_id}`
+
+**Use Cases:**
+- Test estimation algorithms against drones with known GPS positions
+- Detect GPS spoofing by comparing reported position vs RSSI-estimated position
+- Future: Estimate location for encrypted drones with only RSSI data
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `drone_id` | string | The drone's unique identifier |
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `timestamp` | string | No | (now) | ISO 8601 timestamp for the observation |
+| `time_window_seconds` | integer | No | `30` | Time window around timestamp (5-300s) |
+
+**Response:**
+```json
+{
+  "drone_id": "DJI-TRIANGLE",
+  "timestamp": "2026-01-20T15:30:00Z",
+  "actual": {
+    "lat": 37.7749,
+    "lon": -122.4194
+  },
+  "estimated": {
+    "lat": 37.7752,
+    "lon": -122.4191
+  },
+  "error_meters": 42.3,
+  "confidence_radius_m": 150.5,
+  "observations": [
+    {
+      "kit_id": "kit-alpha",
+      "kit_lat": 37.7740,
+      "kit_lon": -122.4180,
+      "rssi": -65,
+      "time": "2026-01-20T15:30:00Z"
+    },
+    {
+      "kit_id": "kit-bravo",
+      "kit_lat": 37.7760,
+      "kit_lon": -122.4210,
+      "rssi": -72,
+      "time": "2026-01-20T15:30:02Z"
+    }
+  ],
+  "algorithm": "weighted_centroid",
+  "spoofing_score": 0.15,
+  "spoofing_suspected": false,
+  "spoofing_reason": null
+}
+```
+
+**Response Fields:**
+- `actual` - Drone's reported GPS position (null if no GPS data available)
+- `estimated` - Calculated position based on RSSI-weighted centroid
+- `error_meters` - Distance between estimated and actual (null if no actual)
+- `confidence_radius_m` - Estimated accuracy radius based on kit spread and signal quality
+- `observations` - Kit data used for calculation
+- `algorithm` - Algorithm used (`weighted_centroid` or `single_kit`)
+- `spoofing_score` - 0.0-1.0 indicating likelihood of GPS spoofing (null if no actual position)
+- `spoofing_suspected` - True if spoofing_score >= 0.5 (null if no actual position)
+- `spoofing_reason` - Explanation when spoofing is suspected or warrants monitoring
+
+**Spoofing Detection:**
+
+The endpoint compares the drone's reported GPS position against the RSSI-estimated position to detect potential GPS spoofing. The spoofing score is calculated based on:
+
+1. **Error ratio**: How much the position error exceeds the expected accuracy
+   - Error within confidence radius: Score ~0-0.15 (normal)
+   - Error 2-4x confidence radius: Score ~0.3-0.6 (suspicious)
+   - Error 4x+ confidence radius: Score 0.6-1.0 (likely spoofing)
+
+2. **Number of observing kits**: More kits = higher confidence in RSSI estimate
+   - 2 kits: Confidence factor 0.7
+   - 3 kits: Confidence factor 0.85
+   - 4+ kits: Confidence factor 1.0
+
+| Spoofing Score | Interpretation |
+|----------------|----------------|
+| 0.0 - 0.29 | Normal - position matches RSSI estimate |
+| 0.30 - 0.49 | Warrants monitoring - some deviation |
+| 0.50 - 0.69 | Suspicious - significant deviation |
+| 0.70 - 1.0 | Likely spoofing - extreme deviation |
+
+**Algorithm:** Uses weighted centroid where each kit's position is weighted by signal strength. Stronger signals (less negative RSSI) receive higher weights since that kit is likely closer to the drone.
+
+**Status Codes:**
+- `200 OK` - Success
+- `400 Bad Request` - Invalid timestamp format or insufficient data
+- `404 Not Found` - No observations found for drone in time window
+- `500 Internal Server Error` - Calculation or database error
+
+**Examples:**
+```bash
+# Estimate location at current time
+curl "http://localhost:8090/api/analysis/estimate-location/DJI-TRIANGLE"
+
+# Estimate location at specific timestamp
+curl "http://localhost:8090/api/analysis/estimate-location/DJI-TRIANGLE?timestamp=2026-01-20T15:30:00Z"
+
+# Estimate with wider time window
+curl "http://localhost:8090/api/analysis/estimate-location/DJI-TRIANGLE?time_window_seconds=60"
+```
+
+**Spoofing Detection Example Response:**
+```json
+{
+  "drone_id": "SUSPICIOUS-DRONE",
+  "timestamp": "2026-01-20T15:30:00Z",
+  "actual": {
+    "lat": 37.7749,
+    "lon": -122.4194
+  },
+  "estimated": {
+    "lat": 37.7820,
+    "lon": -122.4300
+  },
+  "error_meters": 1250.8,
+  "confidence_radius_m": 180.0,
+  "observations": [...],
+  "algorithm": "weighted_centroid",
+  "spoofing_score": 0.72,
+  "spoofing_suspected": true,
+  "spoofing_reason": "Position error (1251m) is 6.9x the expected accuracy (180m)"
+}
 ```
 
 ---

@@ -186,20 +186,21 @@ services:
         max-file: "3"
 
   # =============================================================================
-  # MQTT Services (Optional - enable with --profile mqtt)
+  # MQTT Services (Enabled by default)
   # =============================================================================
   # These services enable push-based data ingest from WarDragon kits via MQTT.
   # Alternative to HTTP polling - kits send data directly to the Analytics stack.
   #
-  # To enable:
-  #   1. Set MQTT_INGEST_ENABLED=true in .env
-  #   2. Run: docker compose --profile mqtt up -d
-  #   3. Configure DragonSync on kits to publish to this server's IP:1883
+  # Configuration:
+  #   1. Configure DragonSync on kits to publish to this server's IP:1883
+  #   2. See docs/mqtt-ingest.md for security hardening options
+  #
+  # To disable MQTT (use HTTP polling only):
+  #   Run: docker compose up -d --scale mosquitto=0 --scale mqtt-ingest=0
 
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: wardragon-mosquitto
-    profiles: ["mqtt"]
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/certs:/mosquitto/certs:ro
@@ -230,7 +231,6 @@ services:
       dockerfile: Dockerfile
       target: mqtt-ingest
     container_name: wardragon-mqtt-ingest
-    profiles: ["mqtt"]
     environment:
       DATABASE_URL: postgresql://wardragon:${DB_PASSWORD}@timescaledb:5432/wardragon
       MQTT_BROKER_HOST: mosquitto

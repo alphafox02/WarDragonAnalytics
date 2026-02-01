@@ -1,6 +1,6 @@
 # MQTT Ingest Guide
 
-This guide explains how to use MQTT-based data ingest as an alternative to HTTP polling.
+This guide explains how to use MQTT-based data ingest for real-time drone data collection.
 
 ## Overview
 
@@ -8,8 +8,10 @@ WarDragon Analytics supports two methods for collecting data from WarDragon kits
 
 | Method | Description | Best For |
 |--------|-------------|----------|
-| **HTTP Polling** (default) | Analytics polls each kit's DragonSync API | Simple setup, kits behind NAT |
-| **MQTT Push** (optional) | Kits push data to Analytics via MQTT broker | Real-time data, firewalled environments |
+| **MQTT Push** (default) | Kits push data to Analytics via MQTT broker | Real-time data, most deployments |
+| **HTTP Polling** | Analytics polls each kit's DragonSync API | Kits behind strict NAT, legacy setups |
+
+**Note**: As of January 2026, MQTT is enabled by default for easier onboarding and real-time data. See the [Security Hardening](#security-hardening-recommended) section below for production deployments.
 
 **Architecture with MQTT:**
 
@@ -41,27 +43,19 @@ WarDragon Kit                    Analytics Server
 
 ## Quick Start
 
-### 1. Enable MQTT Services
-
-Edit your `.env` file:
-
-```bash
-# Enable MQTT ingest
-MQTT_INGEST_ENABLED=true
-```
-
-### 2. Start with MQTT Profile
-
-```bash
-# Start all services including MQTT
-docker compose --profile mqtt up -d
-```
+MQTT services start automatically with the default `docker compose up -d` command.
 
 This starts:
-- **mosquitto**: MQTT broker on port 1883
+- **mosquitto**: MQTT broker on port 1883 (no authentication by default)
 - **mqtt-ingest**: Subscribes to MQTT topics and writes to database
 
-### 3. Configure DragonSync on Each Kit
+### 1. Start Analytics (MQTT included)
+
+```bash
+docker compose up -d
+```
+
+### 2. Configure DragonSync on Each Kit
 
 Edit `config.ini` on each WarDragon kit:
 
@@ -94,6 +88,83 @@ docker exec -it wardragon-mosquitto mosquitto_sub -t 'wardragon/#' -v
 ```
 
 Kits will auto-register in the Kit Manager with source type "MQTT".
+
+---
+
+## Security Hardening (Recommended)
+
+By default, MQTT is configured for easy setup with no authentication. **For production deployments or networks with untrusted devices, you should enable authentication and/or TLS.**
+
+### Why Secure MQTT?
+
+Without authentication, anyone who can reach port 1883 can:
+- Publish fake drone data to your database
+- Subscribe to all drone tracking data
+- Potentially disrupt your monitoring system
+
+### Option 1: Enable Password Authentication (Recommended)
+
+1. **Create password file:**
+   ```bash
+   # Generate password for user 'wardragon'
+   docker exec -it wardragon-mosquitto mosquitto_passwd -c /mosquitto/config/passwd wardragon
+   # Enter password when prompted
+   ```
+
+2. **Update mosquitto configuration:**
+   Edit `mosquitto/mosquitto.conf`:
+   ```conf
+   # Change this line:
+   allow_anonymous false
+
+   # Uncomment this line:
+   password_file /mosquitto/config/passwd
+   ```
+
+3. **Update .env with credentials:**
+   ```bash
+   MQTT_USERNAME=wardragon
+   MQTT_PASSWORD=your_secure_password
+   ```
+
+4. **Update DragonSync on each kit** (`config.ini`):
+   ```ini
+   [MQTT]
+   mqtt_username = wardragon
+   mqtt_password = your_secure_password
+   ```
+
+5. **Restart services:**
+   ```bash
+   docker compose restart mosquitto mqtt-ingest
+   ```
+
+### Option 2: Firewall Restriction
+
+If your kits are on a trusted network, restrict MQTT access by IP:
+
+```bash
+# Allow only specific kit IPs
+sudo ufw allow from 192.168.1.100 to any port 1883
+sudo ufw allow from 192.168.1.101 to any port 1883
+# Deny all others
+sudo ufw deny 1883
+```
+
+### Option 3: Enable TLS Encryption
+
+See the [TLS/SSL Configuration](#tlsssl-configuration) section below for encrypted connections.
+
+### Disabling MQTT
+
+If you prefer HTTP polling only and don't need MQTT:
+
+```bash
+# Start without MQTT services
+docker compose up -d --scale mosquitto=0 --scale mqtt-ingest=0
+```
+
+---
 
 ## Configuration Options
 
@@ -189,7 +260,7 @@ For encrypted MQTT connections over port 8883:
 
 4. Restart MQTT services:
    ```bash
-   docker compose --profile mqtt restart mosquitto
+   docker compose restart mosquitto
    ```
 
 5. Configure DragonSync on each kit:
@@ -316,7 +387,31 @@ You can use both HTTP polling and MQTT simultaneously:
 1. **HTTP polling** for kits in the same network
 2. **MQTT push** for remote/firewalled kits
 
-The collector service automatically skips MQTT-only kits (no api_url) and uses the freshest data when a kit sends via both methods.
+The collector service automatically skips MQTT-only kits (those with no `api_url`).
+
+### What If Both Are Enabled for One Kit?
+
+If a kit is configured in `kits.yaml` (HTTP polling) AND has MQTT publishing enabled in DragonSync:
+
+1. **Both work**: Data is accepted from both sources
+2. **Kit marked as hybrid**: The kit's source is updated to `'both'`
+3. **No data loss**: The database deduplicates based on (time, kit_id, drone_id)
+4. **Slight overhead**: Redundant data collection - the kit is being polled AND pushing
+
+**Recommendation**: For best efficiency, pick one method per kit:
+
+- **Use MQTT only**: Don't add the kit to `kits.yaml` - let it auto-register via MQTT
+- **Use HTTP only**: Don't enable MQTT in DragonSync's `config.ini`
+
+If you accidentally enable both, nothing breaks, but you may notice:
+- Higher database write volume
+- Kit shown as "hybrid" in Kit Manager
+- Slightly higher network traffic
+
+To switch a hybrid kit to MQTT-only:
+1. Remove the kit from `config/kits.yaml`
+2. Delete the kit in Kit Manager (it will re-register as MQTT)
+3. Or: Update the kit's `api_url` to empty in Kit Manager
 
 ## Troubleshooting
 

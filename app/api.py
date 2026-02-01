@@ -24,6 +24,7 @@ import asyncpg
 import csv
 import io
 import re
+import math
 
 # Import optional enterprise modules
 try:
@@ -189,6 +190,22 @@ class MultiKitDetection(BaseModel):
     drone_id: str
     kits: List[dict]
     triangulation_possible: bool
+
+
+class LocationEstimate(BaseModel):
+    """Model for RSSI-based location estimation response."""
+    drone_id: str
+    timestamp: datetime
+    actual: Optional[dict] = None  # {"lat": float, "lon": float} if known
+    estimated: dict  # {"lat": float, "lon": float}
+    error_meters: Optional[float] = None  # Distance from actual if known
+    confidence_radius_m: float  # Estimated accuracy radius
+    observations: List[dict]  # Kit observations used
+    algorithm: str = "weighted_centroid"
+    # Spoofing detection fields
+    spoofing_score: Optional[float] = None  # 0.0-1.0, higher = more suspicious
+    spoofing_suspected: Optional[bool] = None  # True if score > threshold
+    spoofing_reason: Optional[str] = None  # Explanation if suspected
 
 
 # Kit Management Models
@@ -1592,6 +1609,422 @@ async def get_multi_kit_detections(
 
     except Exception as e:
         logger.error(f"Failed to query multi-kit detections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# RSSI-Based Location Estimation
+# =============================================================================
+
+def calculate_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance between two GPS coordinates in meters using Haversine formula."""
+    R = 6371000  # Earth's radius in meters
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
+
+
+def rssi_to_weight(rssi: float) -> float:
+    """
+    Convert RSSI value to a weight for centroid calculation.
+
+    Stronger signals (less negative RSSI) get higher weights.
+    Uses an exponential model since signal strength decreases exponentially with distance.
+
+    RSSI scale (typical):
+    - -40 to -55 dBm: Excellent (very close)
+    - -56 to -65 dBm: Good
+    - -66 to -75 dBm: Fair
+    - -76 to -85 dBm: Weak
+    - -86+ dBm: Very weak (far away)
+    """
+    if rssi is None or rssi == 0:
+        return 0.1  # Minimum weight for missing data
+
+    # Normalize RSSI to 0-1 range (approx -40 to -100 dBm range)
+    # Higher (less negative) RSSI = stronger signal = closer = higher weight
+    normalized = (rssi + 100) / 60  # Maps -100 to 0, -40 to 1
+    normalized = max(0.01, min(1.0, normalized))  # Clamp to [0.01, 1.0]
+
+    # Use exponential weighting to emphasize stronger signals
+    # This helps because signal strength drops off rapidly with distance
+    weight = normalized ** 2  # Square for stronger emphasis on close signals
+
+    return max(0.01, weight)
+
+
+def calculate_spoofing_score(error_meters: float, confidence_radius_m: float, num_kits: int) -> dict:
+    """
+    Calculate a spoofing score based on how much the reported position differs
+    from the RSSI-estimated position.
+
+    The score indicates how likely it is that the drone is spoofing its GPS location.
+
+    Logic:
+    - If error < confidence_radius: Normal (score near 0)
+    - If error is 2-3x confidence_radius: Suspicious (score 0.3-0.6)
+    - If error is 4x+ confidence_radius: Likely spoofing (score 0.7-1.0)
+
+    The score is also adjusted by the number of kits - more kits = more confidence
+    in the RSSI estimate, so deviations are more significant.
+
+    Args:
+        error_meters: Distance between reported and estimated position
+        confidence_radius_m: RSSI estimation confidence radius
+        num_kits: Number of kits that observed the drone
+
+    Returns:
+        dict with spoofing_score (0.0-1.0), spoofing_suspected (bool), spoofing_reason (str)
+    """
+    if error_meters is None or confidence_radius_m <= 0:
+        return {
+            "spoofing_score": None,
+            "spoofing_suspected": None,
+            "spoofing_reason": None
+        }
+
+    # Calculate ratio of error to expected accuracy
+    error_ratio = error_meters / confidence_radius_m
+
+    # Base score from error ratio
+    # - ratio < 1.0: score near 0 (within expected accuracy)
+    # - ratio 1.0-2.0: score 0-0.3 (slightly outside expected)
+    # - ratio 2.0-4.0: score 0.3-0.6 (suspicious)
+    # - ratio > 4.0: score 0.6-1.0 (likely spoofing)
+    if error_ratio <= 1.0:
+        base_score = error_ratio * 0.15  # 0 to 0.15
+    elif error_ratio <= 2.0:
+        base_score = 0.15 + (error_ratio - 1.0) * 0.15  # 0.15 to 0.3
+    elif error_ratio <= 4.0:
+        base_score = 0.3 + (error_ratio - 2.0) * 0.15  # 0.3 to 0.6
+    else:
+        base_score = 0.6 + min(0.4, (error_ratio - 4.0) * 0.05)  # 0.6 to 1.0
+
+    # Adjust for number of kits - more kits = higher confidence in estimate
+    # With 2 kits: confidence factor = 0.7 (moderate confidence)
+    # With 3 kits: confidence factor = 0.85 (good confidence)
+    # With 4+ kits: confidence factor = 1.0 (high confidence)
+    if num_kits >= 4:
+        kit_factor = 1.0
+    elif num_kits == 3:
+        kit_factor = 0.85
+    elif num_kits == 2:
+        kit_factor = 0.7
+    else:
+        kit_factor = 0.5  # Single kit is unreliable
+
+    # Final score combines base score with kit confidence
+    score = min(1.0, base_score * kit_factor)
+    score = round(score, 2)
+
+    # Determine if spoofing is suspected (threshold: 0.5)
+    suspected = score >= 0.5
+
+    # Generate reason string
+    reason = None
+    if suspected:
+        if error_ratio > 4.0:
+            reason = f"Position error ({error_meters:.0f}m) is {error_ratio:.1f}x the expected accuracy ({confidence_radius_m:.0f}m)"
+        else:
+            reason = f"Position error ({error_meters:.0f}m) significantly exceeds expected accuracy ({confidence_radius_m:.0f}m)"
+    elif score >= 0.3:
+        reason = f"Position deviation ({error_meters:.0f}m) is outside expected accuracy - warrants monitoring"
+
+    return {
+        "spoofing_score": score,
+        "spoofing_suspected": suspected,
+        "spoofing_reason": reason
+    }
+
+
+def estimate_location_from_rssi(observations: List[dict]) -> dict:
+    """
+    Estimate drone location using weighted centroid algorithm based on RSSI values.
+
+    Each kit's position is weighted by its signal strength (RSSI).
+    Stronger signals (less negative RSSI) indicate the kit is closer to the drone.
+
+    Args:
+        observations: List of dicts with keys: kit_lat, kit_lon, rssi
+
+    Returns:
+        dict with estimated lat/lon and confidence radius
+    """
+    if not observations:
+        return None
+
+    # Filter observations with valid kit positions
+    valid_obs = [o for o in observations if o.get('kit_lat') and o.get('kit_lon')]
+
+    if not valid_obs:
+        return None
+
+    # If only one observation, return kit position with large uncertainty
+    if len(valid_obs) == 1:
+        obs = valid_obs[0]
+        return {
+            "lat": obs['kit_lat'],
+            "lon": obs['kit_lon'],
+            "confidence_radius_m": 2000,  # Large radius for single observation
+            "method": "single_kit"
+        }
+
+    # Calculate weighted centroid
+    total_weight = 0
+    weighted_lat = 0
+    weighted_lon = 0
+
+    weights = []
+    for obs in valid_obs:
+        rssi = obs.get('rssi')
+        weight = rssi_to_weight(rssi)
+        weights.append(weight)
+
+        weighted_lat += obs['kit_lat'] * weight
+        weighted_lon += obs['kit_lon'] * weight
+        total_weight += weight
+
+    if total_weight == 0:
+        return None
+
+    est_lat = weighted_lat / total_weight
+    est_lon = weighted_lon / total_weight
+
+    # Calculate confidence radius based on:
+    # 1. Spread of kit positions (larger spread = more uncertainty)
+    # 2. Signal strength variance (larger variance = more uncertainty)
+    # 3. Number of observations (more = less uncertainty)
+
+    # Kit position spread
+    max_dist = 0
+    for i, obs1 in enumerate(valid_obs):
+        for obs2 in valid_obs[i+1:]:
+            dist = calculate_distance_meters(
+                obs1['kit_lat'], obs1['kit_lon'],
+                obs2['kit_lat'], obs2['kit_lon']
+            )
+            max_dist = max(max_dist, dist)
+
+    # Base confidence radius is half the max kit separation
+    # (drone is somewhere between kits)
+    base_radius = max_dist / 2 if max_dist > 0 else 500
+
+    # Adjust by number of observations (more obs = more confidence)
+    obs_factor = 1.5 / len(valid_obs)  # Decreases with more observations
+
+    # Adjust by RSSI quality (stronger signals = more confidence)
+    avg_rssi = sum(o.get('rssi', -90) or -90 for o in valid_obs) / len(valid_obs)
+    rssi_factor = 1.0 + ((-avg_rssi - 50) / 50)  # -50dBm = 1.0, -100dBm = 2.0
+
+    confidence_radius = base_radius * obs_factor * rssi_factor
+    confidence_radius = max(50, min(5000, confidence_radius))  # Clamp to 50-5000m
+
+    return {
+        "lat": est_lat,
+        "lon": est_lon,
+        "confidence_radius_m": round(confidence_radius, 1),
+        "method": "weighted_centroid"
+    }
+
+
+@app.get("/api/analysis/estimate-location/{drone_id}", response_model=LocationEstimate)
+async def estimate_drone_location(
+    drone_id: str,
+    timestamp: Optional[str] = Query(None, description="ISO timestamp for the observation (default: latest)"),
+    time_window_seconds: int = Query(30, description="Time window around timestamp", ge=5, le=300)
+):
+    """
+    Estimate drone location using RSSI-based triangulation from multiple kits.
+
+    This endpoint uses a weighted centroid algorithm where each observing kit's
+    position is weighted by its signal strength (RSSI). Kits with stronger signals
+    are assumed to be closer to the drone and receive higher weights.
+
+    Use cases:
+    - Test estimation algorithm against drones with known GPS positions
+    - Spoofing detection: Compare reported GPS against RSSI-estimated position
+    - Future: Estimate location for encrypted drones with only RSSI data
+
+    The response includes:
+    - estimated: Calculated position based on RSSI weights
+    - actual: Drone's reported GPS position (if available) for comparison
+    - error_meters: Distance between estimated and actual (for algorithm validation)
+    - confidence_radius_m: Estimated accuracy of the position
+    - observations: Kit data used for the calculation
+    - spoofing_score: 0.0-1.0 indicating likelihood of GPS spoofing
+    - spoofing_suspected: True if spoofing_score exceeds threshold (0.5)
+    - spoofing_reason: Explanation when spoofing is suspected or warrants monitoring
+
+    Returns:
+        LocationEstimate with estimated position, accuracy metrics, and spoofing analysis.
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    try:
+        # Parse timestamp or use current time
+        if timestamp:
+            try:
+                target_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid timestamp format. Use ISO 8601.")
+        else:
+            target_time = datetime.utcnow()
+
+        # Get drone observations within time window
+        time_start = target_time - timedelta(seconds=time_window_seconds)
+        time_end = target_time + timedelta(seconds=time_window_seconds)
+
+        async with db_pool.acquire() as conn:
+            # Get drone observations from different kits
+            drone_query = """
+                SELECT
+                    d.kit_id,
+                    d.rssi,
+                    d.freq,
+                    d.time,
+                    d.lat as drone_lat,
+                    d.lon as drone_lon,
+                    d.alt as drone_alt
+                FROM drones d
+                WHERE d.drone_id = $1
+                  AND d.time >= $2 AND d.time <= $3
+                ORDER BY d.time DESC
+            """
+            drone_rows = await conn.fetch(drone_query, drone_id, time_start, time_end)
+
+            if not drone_rows:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No observations found for drone {drone_id} in time window"
+                )
+
+            # Get unique kit IDs that observed this drone
+            kit_ids = list(set(row['kit_id'] for row in drone_rows if row['kit_id']))
+
+            if len(kit_ids) < 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No kit observations with RSSI data available"
+                )
+
+            # Get kit positions from system_health table (closest to observation time)
+            kit_positions = {}
+            for kit_id in kit_ids:
+                kit_pos_query = """
+                    SELECT lat, lon, alt, time
+                    FROM system_health
+                    WHERE kit_id = $1
+                      AND lat IS NOT NULL AND lon IS NOT NULL
+                      AND lat != 0 AND lon != 0
+                    ORDER BY ABS(EXTRACT(EPOCH FROM (time - $2)))
+                    LIMIT 1
+                """
+                kit_row = await conn.fetchrow(kit_pos_query, kit_id, target_time)
+                if kit_row:
+                    kit_positions[kit_id] = {
+                        "lat": float(kit_row['lat']),
+                        "lon": float(kit_row['lon']),
+                        "alt": float(kit_row['alt']) if kit_row['alt'] else 0
+                    }
+
+        if not kit_positions:
+            raise HTTPException(
+                status_code=400,
+                detail="No kit position data available. Ensure kits report GPS in system_health."
+            )
+
+        # Build observations list with kit positions and RSSI
+        # Use the best (most recent or strongest) observation per kit
+        observations = []
+        kit_observations = {}
+
+        for row in drone_rows:
+            kit_id = row['kit_id']
+            if kit_id not in kit_positions:
+                continue
+
+            # Keep best observation per kit (highest RSSI)
+            current_rssi = row['rssi'] or -100
+            if kit_id not in kit_observations or (kit_observations[kit_id].get('rssi') or -100) < current_rssi:
+                kit_observations[kit_id] = {
+                    "kit_id": kit_id,
+                    "kit_lat": kit_positions[kit_id]['lat'],
+                    "kit_lon": kit_positions[kit_id]['lon'],
+                    "rssi": row['rssi'],
+                    "freq": row['freq'],
+                    "time": row['time'].isoformat() if row['time'] else None,
+                    "drone_lat": float(row['drone_lat']) if row['drone_lat'] else None,
+                    "drone_lon": float(row['drone_lon']) if row['drone_lon'] else None
+                }
+
+        observations = list(kit_observations.values())
+
+        if len(observations) < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient observations with kit positions for estimation"
+            )
+
+        # Get actual drone position (for comparison) from the closest observation
+        actual_pos = None
+        closest_obs = min(drone_rows, key=lambda r: abs((r['time'] - target_time).total_seconds()) if r['time'] else float('inf'))
+        if closest_obs['drone_lat'] and closest_obs['drone_lon']:
+            actual_pos = {
+                "lat": float(closest_obs['drone_lat']),
+                "lon": float(closest_obs['drone_lon'])
+            }
+
+        # Estimate location using weighted centroid
+        estimate = estimate_location_from_rssi(observations)
+
+        if not estimate:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to calculate location estimate"
+            )
+
+        # Calculate error if we have actual position
+        error_meters = None
+        if actual_pos:
+            error_meters = calculate_distance_meters(
+                estimate['lat'], estimate['lon'],
+                actual_pos['lat'], actual_pos['lon']
+            )
+            error_meters = round(error_meters, 1)
+
+        # Calculate spoofing score based on error vs expected accuracy
+        spoofing_result = calculate_spoofing_score(
+            error_meters,
+            estimate['confidence_radius_m'],
+            len(observations)
+        )
+
+        return LocationEstimate(
+            drone_id=drone_id,
+            timestamp=target_time,
+            actual=actual_pos,
+            estimated={"lat": estimate['lat'], "lon": estimate['lon']},
+            error_meters=error_meters,
+            confidence_radius_m=estimate['confidence_radius_m'],
+            observations=observations,
+            algorithm=estimate['method'],
+            spoofing_score=spoofing_result['spoofing_score'],
+            spoofing_suspected=spoofing_result['spoofing_suspected'],
+            spoofing_reason=spoofing_result['spoofing_reason']
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to estimate drone location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -149,8 +149,10 @@ chmod +x scripts/*.sh
 This will:
 1. Pull the latest Docker images
 2. Build the application containers
-3. Start all services in detached mode
+3. Start all services in detached mode (including MQTT broker)
 4. Display access URLs
+
+**Note:** MQTT ingest is enabled by default on port 1883. Configure DragonSync on your kits to push data to this server's IP. See [MQTT Ingest Guide](mqtt-ingest.md) for details and security hardening.
 
 **Expected output:**
 ```
@@ -168,6 +170,7 @@ WarDragon Analytics is running!
 Access the services at:
   Web UI:  http://localhost:8090
   Grafana: http://localhost:3000
+  MQTT:    mqtt://localhost:1883
 ```
 
 ---

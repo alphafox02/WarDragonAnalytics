@@ -159,13 +159,13 @@ class DroneTrack:
         self.pilot_lat, self.pilot_lon = random_walk_gps(kit_location[0], kit_location[1], 5.0)
         self.home_lat, self.home_lon = self.pilot_lat, self.pilot_lon
 
+        # Flight characteristics (must be set before _generate_waypoints)
+        self.max_speed = random.uniform(5, 20)  # m/s
+        self.max_altitude = random.uniform(30, 120)  # meters
+
         # Generate flight waypoints
         self.waypoints = self._generate_waypoints(kit_location)
         self.current_waypoint_idx = 0
-
-        # Flight characteristics
-        self.max_speed = random.uniform(5, 20)  # m/s
-        self.max_altitude = random.uniform(30, 120)  # meters
 
     def _generate_waypoints(self, kit_location: Tuple[float, float]) -> List[Tuple[float, float, float]]:
         """Generate 3-8 waypoints for the drone flight."""
@@ -471,6 +471,7 @@ def generate_test_data(
     output_mode: str = "sql",
     db_url: str = None,
     signal_probability: float = 0.3,
+    multi_kit_probability: float = 0.3,
 ) -> Dict[str, int]:
     """
     Generate test data for WarDragon Analytics.
@@ -482,6 +483,7 @@ def generate_test_data(
         output_mode: 'sql' (print SQL) or 'db' (write to database)
         db_url: Database URL (required for db mode)
         signal_probability: Probability of FPV signal detection per interval
+        multi_kit_probability: Probability of a drone being seen by multiple kits (for RSSI triangulation testing)
 
     Returns:
         Dict with counts of generated records
@@ -491,6 +493,7 @@ def generate_test_data(
         "drones": 0,
         "signals": 0,
         "health": 0,
+        "multi_kit_drones": 0,
     }
 
     # Database connection (if needed)
@@ -548,6 +551,8 @@ def generate_test_data(
 
     # Generate drone tracks
     all_drone_tracks = []
+    # Shared drones for multi-kit detection (same drone seen by multiple kits)
+    shared_drone_tracks = []  # List of (base_track, [kit_ids])
 
     for kit in kit_data:
         num_drones = random.randint(int(drones_per_kit * 0.7), int(drones_per_kit * 1.3))
@@ -561,7 +566,34 @@ def generate_test_data(
             track = DroneTrack(kit["kit_id"], kit["location"], flight_start)
             all_drone_tracks.append(track)
 
-    print(f"Generated {len(all_drone_tracks)} drone tracks")
+    # Create multi-kit shared drones (for RSSI triangulation and spoofing detection testing)
+    # These drones fly in overlapping coverage areas and are seen by 2+ kits
+    if num_kits >= 2 and multi_kit_probability > 0:
+        num_shared_drones = max(1, int(drones_per_kit * multi_kit_probability))
+        print(f"Creating {num_shared_drones} shared drones for multi-kit detection testing...")
+
+        for i in range(num_shared_drones):
+            # Pick 2-3 kits that will see this drone
+            num_observing_kits = random.randint(2, min(3, num_kits))
+            observing_kits = random.sample(kit_data, num_observing_kits)
+
+            # Create the base drone track (using first kit's location as reference)
+            flight_start = start_time + timedelta(
+                seconds=random.randint(0, int(duration.total_seconds() * 0.6))
+            )
+            base_track = DroneTrack(observing_kits[0]["kit_id"], observing_kits[0]["location"], flight_start)
+
+            # Store shared drone info
+            shared_drone_tracks.append({
+                "base_track": base_track,
+                "observing_kits": observing_kits,
+                "drone_id": base_track.drone_id,
+            })
+            stats["multi_kit_drones"] += 1
+
+    print(f"Generated {len(all_drone_tracks)} single-kit drone tracks")
+    if shared_drone_tracks:
+        print(f"Generated {len(shared_drone_tracks)} multi-kit shared drones (for RSSI triangulation testing)")
 
     # Generate FPV signal generators
     fpv_generators = [
@@ -594,12 +626,48 @@ def generate_test_data(
     while current_time <= end_time:
         iteration += 1
 
-        # Generate drone positions
+        # Generate drone positions (single-kit)
         for track in all_drone_tracks:
             position = track.get_position_at_time(current_time)
             if position:
                 drone_batch.append(position)
                 stats["drones"] += 1
+
+        # Generate multi-kit shared drone observations
+        # Same drone seen by multiple kits with different RSSI values
+        for shared in shared_drone_tracks:
+            base_track = shared["base_track"]
+            position = base_track.get_position_at_time(current_time)
+            if position:
+                # Create observation from each observing kit
+                for kit in shared["observing_kits"]:
+                    # Calculate distance-based RSSI (closer kits get stronger signal)
+                    kit_lat, kit_lon = kit["location"]
+                    drone_lat, drone_lon = position["lat"], position["lon"]
+
+                    # Rough distance calculation (degrees to ~km)
+                    dist_km = math.sqrt(
+                        (kit_lat - drone_lat)**2 + (kit_lon - drone_lon)**2
+                    ) * 111.0  # ~111 km per degree
+
+                    # RSSI decreases with distance (free-space path loss approximation)
+                    # Base RSSI at 100m: -50dBm, decreases ~6dB per doubling of distance
+                    base_rssi = -50
+                    if dist_km > 0.1:
+                        rssi = base_rssi - 20 * math.log10(dist_km / 0.1)
+                    else:
+                        rssi = base_rssi + random.randint(-5, 5)
+
+                    # Clamp to realistic range and add noise
+                    rssi = max(-95, min(-35, rssi + random.uniform(-5, 5)))
+
+                    # Create observation record for this kit
+                    kit_observation = position.copy()
+                    kit_observation["kit_id"] = kit["kit_id"]
+                    kit_observation["rssi"] = round(rssi)
+                    kit_observation["drone_id"] = shared["drone_id"]  # Same drone ID across kits
+                    drone_batch.append(kit_observation)
+                    stats["drones"] += 1
 
         # Generate FPV signals (probabilistically)
         for fpv_gen in fpv_generators:
@@ -728,6 +796,13 @@ Examples:
         help="Probability of FPV signal detection per 5s interval (0.0-1.0)"
     )
 
+    parser.add_argument(
+        "--multi-kit-probability",
+        type=float,
+        default=0.3,
+        help="Probability of drones being shared across multiple kits (for RSSI triangulation testing, 0.0-1.0)"
+    )
+
     args = parser.parse_args()
 
     # Parse duration
@@ -748,17 +823,25 @@ Examples:
             output_mode=args.mode,
             db_url=args.db_url if args.mode == "db" else None,
             signal_probability=args.signal_probability,
+            multi_kit_probability=args.multi_kit_probability,
         )
 
         print("\n" + "="*60)
         print("GENERATION COMPLETE")
         print("="*60)
-        print(f"Kits:          {stats['kits']}")
-        print(f"Drone records: {stats['drones']}")
-        print(f"Signal records: {stats['signals']}")
-        print(f"Health records: {stats['health']}")
-        print(f"Total records: {stats['drones'] + stats['signals'] + stats['health']}")
+        print(f"Kits:                 {stats['kits']}")
+        print(f"Drone records:        {stats['drones']}")
+        print(f"Multi-kit drones:     {stats['multi_kit_drones']} (same drone seen by 2+ kits)")
+        print(f"Signal records:       {stats['signals']}")
+        print(f"Health records:       {stats['health']}")
+        print(f"Total records:        {stats['drones'] + stats['signals'] + stats['health']}")
         print("="*60)
+        if stats['multi_kit_drones'] > 0:
+            print("\nMulti-kit drones enable RSSI location estimation testing:")
+            print("  1. Open Web UI at http://localhost:8090")
+            print("  2. Click on a drone with '2 kits' or '3 kits' badge")
+            print("  3. Click 'Estimate Location' to test RSSI triangulation")
+            print("  4. Review spoofing score in the estimation overlay")
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")

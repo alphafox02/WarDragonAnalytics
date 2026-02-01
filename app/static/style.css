@@ -694,6 +694,17 @@ table tbody tr:hover {
     border-left: 3px solid #ff4444;
 }
 
+.track-row.multi-kit {
+    background: rgba(68, 136, 255, 0.1);
+    border-left: 3px solid #4488ff;
+}
+
+/* Triangulation indicator style */
+.track-row.multi-kit.triangulation {
+    background: rgba(170, 136, 255, 0.15);
+    border-left: 3px solid #aa88ff;
+}
+
 /* Leaflet popup customization */
 .leaflet-popup-content-wrapper {
     background: #2a2a2a;
