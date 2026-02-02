@@ -119,8 +119,21 @@ body.light-theme .filter-section h3 {
 
 body.light-theme .filter-section select,
 body.light-theme .filter-section input {
-    background: #f4f4f0;
-    border-color: #b0b0a8;
+    background: #ffffff;
+    border-color: #999;
+    color: #111;
+}
+
+body.light-theme .filter-section select option {
+    background: #ffffff;
+    color: #111;
+}
+
+body.light-theme .filter-section label {
+    color: #333;
+}
+
+body.light-theme .checkbox-group label {
     color: #333;
 }
 
@@ -168,8 +181,62 @@ body.light-theme .threat-card {
     border-color: #c0c0b8;
 }
 
+body.light-theme .threat-card:hover {
+    background: #e0e0dc;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
 body.light-theme .threat-card h4 {
     color: #333;
+}
+
+body.light-theme .threat-card-label {
+    color: #666;
+}
+
+body.light-theme .threat-card-value {
+    color: #006600;
+}
+
+body.light-theme .threat-card.warning .threat-card-value {
+    color: #cc7700;
+}
+
+body.light-theme .threat-card.critical .threat-card-value {
+    color: #cc0000;
+}
+
+body.light-theme .threat-card-detail {
+    color: #888;
+}
+
+/* Light theme stat badges */
+body.light-theme .stat-label {
+    color: #666;
+}
+
+body.light-theme .stat-value {
+    color: #006600;
+}
+
+/* Light theme buttons */
+body.light-theme .btn {
+    background: #006600;
+    color: #ffffff;
+}
+
+body.light-theme .btn:hover {
+    background: #005500;
+}
+
+body.light-theme .btn-secondary {
+    background: #d8d8d4;
+    color: #333;
+    border: 1px solid #b0b0a8;
+}
+
+body.light-theme .btn-secondary:hover {
+    background: #c8c8c4;
 }
 
 body.light-theme .leaflet-popup-content-wrapper {
