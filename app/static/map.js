@@ -2214,6 +2214,10 @@ async function fetchData() {
             }
         }
 
+        // Sort by time descending (newest first) for consistent table display
+        // API returns data sorted by drone_id (for DISTINCT ON), not by time
+        allData.sort((a, b) => new Date(b.time) - new Date(a.time));
+
         currentData = allData;
 
         // Fetch pattern data (don't fail if this errors)
