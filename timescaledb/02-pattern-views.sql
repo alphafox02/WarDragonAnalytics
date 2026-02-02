@@ -775,6 +775,17 @@ CREATE INDEX IF NOT EXISTS idx_drones_speed_anomaly ON drones(speed, time DESC)
 CREATE INDEX IF NOT EXISTS idx_drones_altitude_anomaly ON drones(alt, time DESC)
     WHERE alt > 400;
 
+-- Index for track_type drone filtering (used by most pattern detection queries)
+CREATE INDEX IF NOT EXISTS idx_drones_track_type_drone ON drones(time DESC)
+    WHERE track_type = 'drone' AND lat IS NOT NULL AND lon IS NOT NULL;
+
+-- Index for night activity detection (hour extraction)
+CREATE INDEX IF NOT EXISTS idx_drones_night_hours ON drones(time DESC)
+    WHERE track_type = 'drone'
+    AND lat IS NOT NULL
+    AND lon IS NOT NULL
+    AND (EXTRACT(HOUR FROM time) >= 22 OR EXTRACT(HOUR FROM time) <= 5);
+
 -- =============================================================================
 -- GRANTS AND PERMISSIONS
 -- =============================================================================

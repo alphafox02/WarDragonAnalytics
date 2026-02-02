@@ -47,41 +47,59 @@ GET /update/check    -> Git update availability
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
 └───────┼────────────┼────────────┼────────────┼────────────────┘
         │            │            │            │
-        │ HTTP Poll every 5s     │            │
-        └────────────┴────────────┴────────────┘
-                     │
-          ┌──────────▼──────────────────────────────────┐
-          │    WarDragon Analytics (Docker)             │
-          │                                              │
-          │  ┌─────────────────────────────────────┐    │
-          │  │  Collector Service (Python)         │    │
-          │  │  - Polls /drones, /signals, /status │    │
-          │  │  - Writes to TimescaleDB            │    │
-          │  │  - Tracks kit health/availability   │    │
-          │  └──────────────┬──────────────────────┘    │
-          │                 │                            │
-          │  ┌──────────────▼──────────────────────┐    │
-          │  │  TimescaleDB (PostgreSQL)          │    │
-          │  │  - Time-series optimized           │    │
-          │  │  - Automatic partitioning          │    │
-          │  │  - Data retention policies         │    │
-          │  └──────────────┬──────────────────────┘    │
-          │                 │                            │
-          │  ┌──────────────┴──────────────────────┐    │
-          │  │         Grafana :3000               │    │
-          │  │  - Pre-built dashboards             │    │
-          │  │  - Real-time maps                   │    │
-          │  │  - Time-series graphs               │    │
-          │  └─────────────────────────────────────┘    │
-          │                                              │
-          │  ┌─────────────────────────────────────┐    │
-          │  │   Web UI :8090 (FastAPI/Flask)      │    │
-          │  │  - Leaflet map (all kits combined)  │    │
-          │  │  - Kit management                   │    │
-          │  │  - CSV/KML export                   │    │
-          │  │  - Alert configuration              │    │
-          │  └─────────────────────────────────────┘    │
-          └──────────────────────────────────────────────┘
+        │  ┌─────────┴────────────┴────────────┘
+        │  │  MQTT Push (default)    OR    HTTP Poll (every 5s)
+        │  │
+        └──┴─────────────────────────────────────┐
+                                                  │
+          ┌───────────────────────────────────────▼──────────────┐
+          │    WarDragon Analytics (Docker)                      │
+          │                                                       │
+          │  ┌─────────────────────┐  ┌──────────────────────┐   │
+          │  │ MQTT Ingest Service │  │ HTTP Collector       │   │
+          │  │ - Subscribes to     │  │ - Polls kit APIs     │   │
+          │  │   wardragon/# topics│  │ - For legacy/NAT     │   │
+          │  │ - Auto-registers    │  │   restricted kits    │   │
+          │  │   kits              │  │                      │   │
+          │  └─────────┬───────────┘  └──────────┬───────────┘   │
+          │            │                          │               │
+          │            └──────────┬───────────────┘               │
+          │                       │                               │
+          │            ┌──────────▼──────────────────────┐       │
+          │            │  Mosquitto MQTT Broker :1883    │       │
+          │            │  (for kit-to-server push)       │       │
+          │            └──────────┬──────────────────────┘       │
+          │                       │                               │
+          │  ┌────────────────────▼────────────────────────┐     │
+          │  │  TimescaleDB (PostgreSQL)                   │     │
+          │  │  - Time-series optimized (hypertables)      │     │
+          │  │  - Automatic partitioning                   │     │
+          │  │  - Pattern detection views & functions      │     │
+          │  │  - Data retention policies (30 days)        │     │
+          │  └────────────────────┬────────────────────────┘     │
+          │                       │                               │
+          │  ┌────────────────────┴────────────────────────┐     │
+          │  │         Grafana :3000                       │     │
+          │  │  - Pre-built dashboards                     │     │
+          │  │  - Real-time maps (Geomap panel)            │     │
+          │  │  - Time-series graphs                       │     │
+          │  └─────────────────────────────────────────────┘     │
+          │                                                       │
+          │  ┌─────────────────────────────────────────────┐     │
+          │  │   Web UI :8090 (FastAPI)                    │     │
+          │  │  - Leaflet map (all kits combined)          │     │
+          │  │  - Kit management (add/edit/delete)         │     │
+          │  │  - Pattern detection (anomalies, multi-kit) │     │
+          │  │  - CSV/KML export                           │     │
+          │  │  - AI Assistant (natural language queries)  │     │
+          │  └─────────────────────────────────────────────┘     │
+          │                                                       │
+          │  ┌─────────────────────────────────────────────┐     │
+          │  │   Ollama (Optional) :11434                  │     │
+          │  │  - Local LLM for AI Assistant               │     │
+          │  │  - Natural language drone data queries      │     │
+          │  └─────────────────────────────────────────────┘     │
+          └───────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -94,11 +112,12 @@ CREATE TABLE kits (
     kit_id TEXT PRIMARY KEY,
     name TEXT,
     location TEXT,
-    api_url TEXT NOT NULL,
+    api_url TEXT,                 -- NULL for MQTT-only kits
     last_seen TIMESTAMPTZ,
     status TEXT CHECK (status IN ('online', 'offline', 'error')),
     enabled BOOLEAN DEFAULT TRUE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    source TEXT DEFAULT 'http'    -- 'http', 'mqtt', or 'both'
 );
 ```
 
