@@ -365,9 +365,10 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                 if last_seen.tzinfo is None:
                     last_seen = last_seen.replace(tzinfo=timezone.utc)
                 time_since_seen = (now - last_seen).total_seconds()
-                if time_since_seen < 30:
+                # Online threshold: 60s (kits send every 30s, allow buffer)
+                if time_since_seen < 60:
                     kit["status"] = "online"
-                elif time_since_seen < 120:
+                elif time_since_seen < 180:
                     kit["status"] = "stale"
                 else:
                     kit["status"] = "offline"
@@ -399,9 +400,10 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                     else:
                         time_since_seen = float('inf')
 
-                    if time_since_seen < 30:
+                    # Online threshold: 60s (kits send every 30s, allow buffer)
+                    if time_since_seen < 60:
                         status = "online"
-                    elif time_since_seen < 120:
+                    elif time_since_seen < 180:
                         status = "stale"
                     else:
                         status = "offline"
@@ -416,6 +418,50 @@ async def get_kit_status(kit_id: Optional[str] = None) -> List[dict]:
                         "created_at": None,
                         "source": "discovered"  # Special source indicating auto-discovered from data
                     }
+
+        # Fetch latest health data (including location) from system_health for each kit
+        health_query = """
+            SELECT DISTINCT ON (kit_id)
+                kit_id, lat, lon, alt,
+                cpu_percent, memory_percent, disk_percent,
+                temp_cpu, temp_gpu, pluto_temp, zynq_temp,
+                uptime_hours, gps_fix, time as health_time
+            FROM system_health
+            WHERE time > NOW() - INTERVAL '1 hour'
+            ORDER BY kit_id, time DESC
+        """
+        health_rows = await conn.fetch(health_query)
+        kit_health = {row["kit_id"]: dict(row) for row in health_rows}
+
+        # Add health data to each kit
+        for kit_id, kit in kits_dict.items():
+            if kit_id in kit_health:
+                health = kit_health[kit_id]
+                # Location
+                kit["lat"] = health.get("lat")
+                kit["lon"] = health.get("lon")
+                kit["alt"] = health.get("alt")
+                # System health
+                kit["cpu_percent"] = health.get("cpu_percent")
+                kit["memory_percent"] = health.get("memory_percent")
+                kit["disk_percent"] = health.get("disk_percent")
+                kit["temp_cpu"] = health.get("temp_cpu")
+                kit["temp_gpu"] = health.get("temp_gpu")
+                kit["pluto_temp"] = health.get("pluto_temp")
+                kit["zynq_temp"] = health.get("zynq_temp")
+                kit["uptime_hours"] = health.get("uptime_hours")
+                kit["gps_fix"] = health.get("gps_fix")
+                kit["health_time"] = health.get("health_time")
+            else:
+                kit["lat"] = None
+                kit["lon"] = None
+                kit["alt"] = None
+                kit["cpu_percent"] = None
+                kit["memory_percent"] = None
+                kit["disk_percent"] = None
+                kit["temp_cpu"] = None
+                kit["uptime_hours"] = None
+                kit["gps_fix"] = None
 
         # Sort by name and return as list
         kits = sorted(kits_dict.values(), key=lambda k: k.get("name") or k.get("kit_id") or "")

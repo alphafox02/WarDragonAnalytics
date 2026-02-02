@@ -48,6 +48,9 @@ let estimationErrorLine = null;  // Line from estimated to actual
 let estimationOverlay = null;  // Info overlay element
 let activeEstimation = null;  // Currently displayed estimation drone_id
 
+// Kit location markers
+let kitMarkers = [];  // Kit location markers on map
+
 // Kit color mapping
 const KIT_COLORS = [
     '#ff4444', '#4444ff', '#44ff44', '#ffff44', '#ff44ff', '#44ffff',
@@ -1521,6 +1524,24 @@ function updateThreatCards() {
 }
 
 // Alert Management
+// State-based alerting: alert ONCE when anomaly first detected
+// Only alert again if drone returns to normal AND then becomes anomalous again
+let alertedAnomalies = new Set();  // Drone IDs we've already alerted on (while still anomalous)
+let currentAlertIndex = 0;  // For ticker rotation
+let alertRotationInterval = null;
+const ALERT_ROTATION_DELAY = 5000;  // 5 seconds between rotations
+
+function loadAlertedAnomalies() {
+    const saved = localStorage.getItem('wardragon_alerted_anomalies');
+    if (saved) {
+        alertedAnomalies = new Set(JSON.parse(saved));
+    }
+}
+
+function saveAlertedAnomalies() {
+    localStorage.setItem('wardragon_alerted_anomalies', JSON.stringify([...alertedAnomalies]));
+}
+
 function addAlert(type, title, message) {
     const alert = {
         id: Date.now(),
@@ -1533,33 +1554,101 @@ function addAlert(type, title, message) {
     alerts.push(alert);
     saveAlerts();
     renderAlerts();
+    // Show newest alert immediately
+    currentAlertIndex = alerts.length - 1;
+    updateTickerDisplay();
 }
 
 function dismissAlert(alertId) {
+    // Just remove the alert - state tracking handles re-alerting
     alerts = alerts.filter(a => a.id !== alertId);
+    if (currentAlertIndex >= alerts.length) {
+        currentAlertIndex = Math.max(0, alerts.length - 1);
+    }
     saveAlerts();
     renderAlerts();
 }
 
 function clearAllAlerts() {
     alerts = [];
+    currentAlertIndex = 0;
     saveAlerts();
     renderAlerts();
 }
 
+function toggleAlertDropdown() {
+    const dropdown = document.getElementById('alert-dropdown');
+    dropdown.classList.toggle('open');
+}
+
+function prevAlert() {
+    if (alerts.length === 0) return;
+    currentAlertIndex = (currentAlertIndex - 1 + alerts.length) % alerts.length;
+    updateTickerDisplay();
+    resetRotationTimer();
+}
+
+function nextAlert() {
+    if (alerts.length === 0) return;
+    currentAlertIndex = (currentAlertIndex + 1) % alerts.length;
+    updateTickerDisplay();
+    resetRotationTimer();
+}
+
+function updateTickerDisplay() {
+    const tickerEl = document.getElementById('alert-current');
+    if (!tickerEl || alerts.length === 0) return;
+
+    const alert = alerts[currentAlertIndex];
+    if (!alert) return;
+
+    tickerEl.className = `alert-current ${alert.type}`;
+    const indexStr = alerts.length > 1 ? `[${currentAlertIndex + 1}/${alerts.length}] ` : '';
+    tickerEl.innerHTML = `${indexStr}<strong>${alert.title}:</strong> ${alert.message}`;
+}
+
+function startAlertRotation() {
+    if (alertRotationInterval) clearInterval(alertRotationInterval);
+    if (alerts.length > 1) {
+        alertRotationInterval = setInterval(() => {
+            currentAlertIndex = (currentAlertIndex + 1) % alerts.length;
+            updateTickerDisplay();
+        }, ALERT_ROTATION_DELAY);
+    }
+}
+
+function resetRotationTimer() {
+    // Reset timer when user manually navigates
+    if (alertRotationInterval) {
+        clearInterval(alertRotationInterval);
+        startAlertRotation();
+    }
+}
+
 function renderAlerts() {
-    const panel = document.getElementById('alert-panel');
+    const banner = document.getElementById('alert-banner');
     const list = document.getElementById('alerts-list');
+    const countEl = document.getElementById('alert-count');
 
     if (alerts.length === 0) {
-        panel.classList.remove('has-alerts');
+        banner.classList.remove('has-alerts');
+        if (alertRotationInterval) {
+            clearInterval(alertRotationInterval);
+            alertRotationInterval = null;
+        }
         return;
     }
 
-    panel.classList.add('has-alerts');
-    list.innerHTML = '';
+    banner.classList.add('has-alerts');
+    countEl.textContent = alerts.length;
 
-    alerts.forEach(alert => {
+    // Update ticker
+    updateTickerDisplay();
+    startAlertRotation();
+
+    // Render dropdown list
+    list.innerHTML = '';
+    alerts.slice().reverse().forEach(alert => {
         const alertEl = document.createElement('div');
         alertEl.className = `alert-item ${alert.type}`;
         alertEl.innerHTML = `
@@ -1588,27 +1677,38 @@ function loadAlerts() {
 
 // Check for new alerts based on pattern data
 function checkForAlerts() {
-    const now = new Date();
+    // Get current set of anomalous drone IDs
+    const currentAnomalyIds = new Set(patternData.anomalies.map(a => a.drone_id));
 
-    // Check for new anomalies
+    // Clean up: remove drones from alerted set if they're no longer anomalous
+    // This allows them to alert again if they become anomalous later
+    alertedAnomalies.forEach(droneId => {
+        if (!currentAnomalyIds.has(droneId)) {
+            alertedAnomalies.delete(droneId);
+        }
+    });
+    saveAlertedAnomalies();
+
+    // Check for NEW anomalies (first time seeing this drone as anomalous)
     patternData.anomalies.forEach(anomaly => {
-        const existingAlert = alerts.find(a =>
-            a.message.includes(anomaly.drone_id) && a.type === 'critical'
-        );
-        if (!existingAlert) {
+        // Only alert if we haven't already alerted on this drone while it's anomalous
+        if (!alertedAnomalies.has(anomaly.drone_id)) {
             const anomalyTypes = anomaly.anomaly_types ? anomaly.anomaly_types.join(', ') : 'Unknown';
             addAlert('critical', 'Anomaly Detected',
                 `Drone ${anomaly.drone_id}: ${anomalyTypes}`);
+            alertedAnomalies.add(anomaly.drone_id);
+            saveAlertedAnomalies();
         }
     });
 
     // Check for coordinated activity
     patternData.coordinated.forEach(group => {
         if (group.drone_ids && group.drone_ids.length > 2) {
+            const groupKey = group.drone_ids[0];
             const existingAlert = alerts.find(a =>
-                a.message.includes('coordinated') && a.message.includes(group.drone_ids[0])
+                a.message.includes('coordinated') && a.message.includes(groupKey)
             );
-            if (!existingAlert) {
+            if (!existingAlert && !isAlertDismissed(groupKey, 'warning')) {
                 addAlert('warning', 'Coordinated Activity',
                     `${group.drone_ids.length} drones detected in close proximity`);
             }
@@ -1621,7 +1721,7 @@ function checkForAlerts() {
         const existingAlert = alerts.find(a =>
             a.message.includes(drone.drone_id) && a.type === 'info'
         );
-        if (!existingAlert) {
+        if (!existingAlert && !isAlertDismissed(drone.drone_id, 'info')) {
             addAlert('info', 'Watchlist Match',
                 `Drone ${drone.drone_id} detected`);
         }
@@ -1689,6 +1789,8 @@ async function fetchKits() {
         const data = await response.json();
         kits = data.kits || [];
         updateKitCheckboxes();
+        updateKitMarkers();  // Update kit location markers on map
+        updateActiveKitsCount();  // Update Active Kits count from registered kits
     } catch (error) {
         if (error.name === 'AbortError') {
             console.warn('Kit fetch timed out - database may be slow');
@@ -1696,6 +1798,130 @@ async function fetchKits() {
             console.error('Failed to fetch kits:', error);
         }
         // Keep existing kits data if we have it
+    }
+}
+
+// Update Active Kits count based on registered kits (not just drone data)
+function updateActiveKitsCount() {
+    const onlineKits = kits.filter(k => k.status === 'online' || k.status === 'stale');
+    document.getElementById('active-kits').textContent = onlineKits.length;
+}
+
+// Update kit location markers on the map
+function updateKitMarkers() {
+    // Clear existing kit markers
+    kitMarkers.forEach(m => map.removeLayer(m));
+    kitMarkers = [];
+
+    if (!map) return;
+
+    kits.forEach(kit => {
+        // Only add markers for kits with valid lat/lon
+        if (kit.lat == null || kit.lon == null || isNaN(kit.lat) || isNaN(kit.lon)) return;
+        if (kit.lat === 0 && kit.lon === 0) return;  // Skip default 0,0 locations
+
+        const color = getKitColor(kit.kit_id);
+        const statusEmoji = kit.status === 'online' ? '🟢' : kit.status === 'stale' ? '🟡' : '🔴';
+
+        // Create a custom icon for kit marker (larger, distinct from drones)
+        const icon = L.divIcon({
+            className: 'kit-marker',
+            html: `<div style="
+                width: 24px;
+                height: 24px;
+                background: ${color};
+                border: 3px solid #000;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                font-weight: bold;
+                color: white;
+                text-shadow: 1px 1px 1px #000;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+            ">K</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        const marker = L.marker([kit.lat, kit.lon], { icon });
+
+        // Build popup content
+        const sourceLabel = kit.source === 'mqtt' ? 'MQTT Push' :
+                          kit.source === 'hybrid' ? 'HTTP + MQTT' :
+                          kit.source === 'discovered' ? 'Discovered' : 'HTTP Poll';
+
+        // Format health values with color coding
+        const formatPercent = (val, warn=70, crit=90) => {
+            if (val == null) return '<span style="color:#666">--</span>';
+            const color = val >= crit ? '#ff4444' : val >= warn ? '#ffaa00' : '#00cc00';
+            return `<span style="color:${color}">${val.toFixed(1)}%</span>`;
+        };
+        const formatTemp = (val, warn=70, crit=85) => {
+            if (val == null) return '<span style="color:#666">--</span>';
+            const color = val >= crit ? '#ff4444' : val >= warn ? '#ffaa00' : '#00cc00';
+            return `<span style="color:${color}">${val.toFixed(1)}°C</span>`;
+        };
+        const formatUptime = (hours) => {
+            if (hours == null) return '--';
+            if (hours < 24) return `${hours.toFixed(1)}h`;
+            const days = Math.floor(hours / 24);
+            const h = (hours % 24).toFixed(0);
+            return `${days}d ${h}h`;
+        };
+        const gpsIcon = kit.gps_fix ? '🛰️' : '⚠️';
+
+        let popupContent = `
+            <div class="kit-popup" style="min-width: 220px;">
+                <h3 style="margin: 0 0 8px 0; color: ${color};">${statusEmoji} ${kit.name || kit.kit_id}</h3>
+                <div style="font-size: 12px; line-height: 1.6;">
+                    <div><strong>ID:</strong> ${kit.kit_id}</div>
+                    <div><strong>Status:</strong> ${kit.status || 'unknown'} · <strong>Source:</strong> ${sourceLabel}</div>
+                    <div><strong>Location:</strong> ${kit.lat.toFixed(5)}, ${kit.lon.toFixed(5)} ${gpsIcon}</div>
+                    ${kit.alt ? `<div><strong>Altitude:</strong> ${kit.alt.toFixed(1)}m</div>` : ''}
+                    <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px;">
+                        <div><strong>CPU:</strong> ${formatPercent(kit.cpu_percent)}</div>
+                        <div><strong>Memory:</strong> ${formatPercent(kit.memory_percent)}</div>
+                        <div><strong>Disk:</strong> ${formatPercent(kit.disk_percent, 80, 95)}</div>
+                        <div><strong>Uptime:</strong> ${formatUptime(kit.uptime_hours)}</div>
+                    </div>
+                    ${kit.temp_cpu != null ? `
+                    <div style="margin-top: 4px;">
+                        <strong>Temps:</strong> CPU ${formatTemp(kit.temp_cpu)}
+                        ${kit.pluto_temp != null ? ` · Pluto ${formatTemp(kit.pluto_temp)}` : ''}
+                        ${kit.zynq_temp != null ? ` · Zynq ${formatTemp(kit.zynq_temp)}` : ''}
+                    </div>` : ''}
+                    <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
+                    ${kit.last_seen ? `<div style="color:#888; font-size:11px;">Last seen: ${new Date(kit.last_seen).toLocaleString()}</div>` : ''}
+                </div>
+            </div>
+        `;
+
+        marker.bindPopup(popupContent);
+        marker.bindTooltip(`${kit.name || kit.kit_id} (Kit)`, { permanent: false, direction: 'top' });
+
+        marker.addTo(map);
+        kitMarkers.push(marker);
+    });
+}
+
+// Center map on a specific kit
+function centerOnKit(kitId) {
+    const kit = kits.find(k => k.kit_id === kitId);
+    if (kit && kit.lat != null && kit.lon != null && !isNaN(kit.lat) && !isNaN(kit.lon)) {
+        map.setView([kit.lat, kit.lon], 15);
+        // Open the kit marker popup
+        const marker = kitMarkers.find(m => {
+            const pos = m.getLatLng();
+            return Math.abs(pos.lat - kit.lat) < 0.0001 && Math.abs(pos.lng - kit.lon) < 0.0001;
+        });
+        if (marker) {
+            marker.openPopup();
+        }
+    } else {
+        console.log(`Kit ${kitId} has no location data`);
     }
 }
 
@@ -1726,6 +1952,10 @@ function updateKitCheckboxes() {
 
     kits.forEach(kit => {
         const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '4px';
+
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.value = kit.kit_id;
@@ -1745,8 +1975,23 @@ function updateKitCheckboxes() {
                          kit.source === 'discovered' ? ' [D]' : '';
 
         label.appendChild(checkbox);
-        label.appendChild(document.createTextNode(` ${statusDot} ${kit.name || kit.kit_id}${sourceTag}`));
-        label.title = `Status: ${kit.status || 'unknown'}, Source: ${kit.source || 'http'}\n[M]=MQTT, [H]=Hybrid, [D]=Discovered from data`;
+        label.appendChild(document.createTextNode(` ${statusDot} `));
+
+        // Create a clickable span for the kit name that centers the map
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = `${kit.name || kit.kit_id}${sourceTag}`;
+        nameSpan.style.cursor = 'pointer';
+        nameSpan.style.textDecoration = 'underline';
+        nameSpan.style.textDecorationStyle = 'dotted';
+        nameSpan.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            centerOnKit(kit.kit_id);
+        };
+        nameSpan.title = kit.lat != null ? 'Click to center map on kit' : 'No location data';
+
+        label.appendChild(nameSpan);
+        label.title = `Status: ${kit.status || 'unknown'}, Source: ${kit.source || 'http'}\n[M]=MQTT, [H]=Hybrid, [D]=Discovered from data\nClick name to center map on kit`;
         container.appendChild(label);
     });
 }
@@ -1775,36 +2020,41 @@ function getFilters() {
 }
 
 // Apply active filters to data
+// Pattern filters use OR logic (union) - show drones matching ANY active filter
+// Geo filter uses AND logic (intersection) - always applied on top
 function applyActiveFilters(data) {
     let filtered = [...data];
 
-    // Show unusual filter
-    if (activeFilters.showUnusual) {
-        filtered = filtered.filter(d =>
-            patternData.anomalies.some(a => a.drone_id === d.drone_id)
-        );
+    // Check if any pattern filters are active
+    const hasPatternFilters = activeFilters.showUnusual || activeFilters.showRepeated ||
+                              activeFilters.showCoordinated || activeFilters.showMultikit;
+
+    // If pattern filters active, use OR logic (union)
+    if (hasPatternFilters) {
+        // Build sets of matching drone IDs for each active filter
+        const matchingSets = [];
+
+        if (activeFilters.showUnusual) {
+            matchingSets.push(new Set(patternData.anomalies.map(a => a.drone_id)));
+        }
+        if (activeFilters.showRepeated) {
+            matchingSets.push(new Set(patternData.repeated.map(r => r.drone_id)));
+        }
+        if (activeFilters.showCoordinated) {
+            const coordIds = patternData.coordinated.flatMap(g => g.drone_ids || []);
+            matchingSets.push(new Set(coordIds));
+        }
+        if (activeFilters.showMultikit) {
+            matchingSets.push(new Set(patternData.multiKit.map(m => m.drone_id)));
+        }
+
+        // OR logic: drone matches if it's in ANY of the matching sets
+        filtered = filtered.filter(d => {
+            return matchingSets.some(set => set.has(d.drone_id));
+        });
     }
 
-    // Show repeated filter
-    if (activeFilters.showRepeated) {
-        filtered = filtered.filter(d =>
-            patternData.repeated.some(r => r.drone_id === d.drone_id)
-        );
-    }
-
-    // Show coordinated filter
-    if (activeFilters.showCoordinated) {
-        const coordinatedDrones = patternData.coordinated.flatMap(g => g.drone_ids || []);
-        filtered = filtered.filter(d => coordinatedDrones.includes(d.drone_id));
-    }
-
-    // Show multi-kit filter (drones seen by 2+ kits)
-    if (activeFilters.showMultikit) {
-        const multikitDrones = patternData.multiKit.map(m => m.drone_id);
-        filtered = filtered.filter(d => multikitDrones.includes(d.drone_id));
-    }
-
-    // Geographic polygon filter
+    // Geographic polygon filter (AND logic - always applied)
     if (activeFilters.geoPolygon) {
         filtered = filtered.filter(d => {
             if (!d.lat || !d.lon) return false;
@@ -2034,6 +2284,7 @@ function toggleQuickFilter(filterName) {
     const displayData = applyActiveFilters(currentData);
     updateMap(displayData);
     updateTable(displayData);
+    updateEmptyState(displayData);
 }
 
 // Filter by threat card
@@ -2067,6 +2318,48 @@ function filterByThreatCard(cardType) {
     const displayData = applyActiveFilters(currentData);
     updateMap(displayData);
     updateTable(displayData);
+    updateEmptyState(displayData);
+}
+
+// Clear all pattern filters
+function clearAllPatternFilters() {
+    activeFilters.showUnusual = false;
+    activeFilters.showRepeated = false;
+    activeFilters.showCoordinated = false;
+    activeFilters.showMultikit = false;
+
+    document.getElementById('filter-showUnusual').classList.remove('active');
+    document.getElementById('filter-showRepeated').classList.remove('active');
+    document.getElementById('filter-showCoordinated').classList.remove('active');
+    document.getElementById('filter-showMultikit').classList.remove('active');
+
+    const displayData = applyActiveFilters(currentData);
+    updateMap(displayData);
+    updateTable(displayData);
+    updateEmptyState(displayData);
+}
+
+// Show/hide empty state overlay when filters match nothing
+function updateEmptyState(displayData) {
+    const emptyState = document.getElementById('filter-empty-state');
+    const filtersEl = document.getElementById('empty-state-filters');
+    if (!emptyState) return;
+
+    // Check if any pattern filters are active
+    const activeFilterNames = [];
+    if (activeFilters.showUnusual) activeFilterNames.push('Unusual');
+    if (activeFilters.showRepeated) activeFilterNames.push('Repeated');
+    if (activeFilters.showCoordinated) activeFilterNames.push('Coordinated');
+    if (activeFilters.showMultikit) activeFilterNames.push('Multi-Kit');
+
+    // Show empty state only if filters are active AND no results
+    if (activeFilterNames.length > 0 && displayData.length === 0) {
+        filtersEl.innerHTML = 'Active filters: ' +
+            activeFilterNames.map(f => `<span class="filter-tag">${f}</span>`).join(' ');
+        emptyState.style.display = 'block';
+    } else {
+        emptyState.style.display = 'none';
+    }
 }
 
 // Export CSV
@@ -2115,6 +2408,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadTheme();
     loadWatchlist();
     loadAlerts();
+    loadAlertedAnomalies();
 
     initMap();
     setupAutoRefresh();

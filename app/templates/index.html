@@ -132,13 +132,30 @@
         </div>
     </div>
 
-    <!-- Alert Panel -->
-    <div id="alert-panel" class="alert-panel">
-        <div class="alert-header">
-            <h3>Live Alerts</h3>
-            <button class="alert-clear-all" onclick="clearAllAlerts()">Clear All</button>
+    <!-- Alert Banner (compact ticker style) -->
+    <div id="alert-banner" class="alert-banner">
+        <div class="alert-banner-content">
+            <span id="alert-badge" class="alert-badge" onclick="toggleAlertDropdown()">
+                <span class="alert-icon">⚠</span>
+                <span id="alert-count">0</span> alerts
+            </span>
+            <div id="alert-ticker" class="alert-ticker">
+                <span id="alert-current" class="alert-current"></span>
+            </div>
+            <div class="alert-controls">
+                <button class="alert-nav-btn" onclick="prevAlert()" title="Previous">‹</button>
+                <button class="alert-nav-btn" onclick="nextAlert()" title="Next">›</button>
+                <button class="alert-clear-btn" onclick="clearAllAlerts()" title="Clear All">✕</button>
+            </div>
         </div>
-        <div id="alerts-list" class="alerts-list"></div>
+        <!-- Expandable dropdown for full list -->
+        <div id="alert-dropdown" class="alert-dropdown">
+            <div class="alert-dropdown-header">
+                <span>All Alerts</span>
+                <button onclick="toggleAlertDropdown()">Close</button>
+            </div>
+            <div id="alerts-list" class="alerts-list"></div>
+        </div>
     </div>
 
     <!-- Main Container -->
@@ -288,10 +305,10 @@
                     <div id="multi-kit-detections" class="threat-card-value">0</div>
                     <div class="threat-card-detail">Drones seen by 2+ kits</div>
                 </div>
-                <div class="threat-card warning">
+                <div class="threat-card warning" onclick="filterByThreatCard('unusual')">
                     <div class="threat-card-label">Anomalies Detected</div>
                     <div id="anomalies-count" class="threat-card-value">0</div>
-                    <div class="threat-card-detail">Total anomaly instances</div>
+                    <div class="threat-card-detail">Click to filter anomalous drones</div>
                 </div>
             </div>
 
@@ -318,6 +335,15 @@
             <!-- Map -->
             <div class="map-container">
                 <div id="map"></div>
+                <!-- Empty state overlay when filters match nothing -->
+                <div id="filter-empty-state" class="filter-empty-state" style="display: none;">
+                    <div class="empty-state-content">
+                        <div class="empty-state-icon">🔍</div>
+                        <div class="empty-state-title">No matches found</div>
+                        <div id="empty-state-filters" class="empty-state-filters"></div>
+                        <button onclick="clearAllPatternFilters()" class="empty-state-btn">Clear Filters</button>
+                    </div>
+                </div>
             </div>
 
             <!-- Table -->

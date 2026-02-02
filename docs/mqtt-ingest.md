@@ -315,11 +315,35 @@ DragonSync publishes to these topics:
 
 | Topic | Description | Format |
 |-------|-------------|--------|
-| `wardragon/drones` | Aggregate drone list | JSON array |
+| `wardragon/drones` | Aggregate drone list | JSON object (single drone) |
 | `wardragon/drone/{id}` | Individual drone updates | JSON object |
 | `wardragon/aircraft` | ADS-B aircraft data | JSON object |
 | `wardragon/signals` | FPV signal detections | JSON object |
-| `wardragon/system` | System health/status | JSON object |
+| `wardragon/system/attrs` | System health/status | JSON object |
+
+### Field Name Mapping (Important)
+
+DragonSync's MQTT payload uses different field names than its HTTP API for Home Assistant compatibility. The `mqtt-ingest` service automatically translates these.
+
+**System Health Fields (`wardragon/system/attrs`):**
+
+| DragonSync MQTT Field | Database Column | Transformation |
+|-----------------------|-----------------|----------------|
+| `latitude` | `lat` | Direct copy |
+| `longitude` | `lon` | Direct copy |
+| `hae` | `alt` | Direct copy |
+| `cpu_usage` | `cpu_percent` | Direct copy |
+| `memory_total_mb`, `memory_available_mb` | `memory_percent` | Calculated: `(total-avail)/total * 100` |
+| `disk_total_mb`, `disk_used_mb` | `disk_percent` | Calculated: `used/total * 100` |
+| `uptime_s` | `uptime_hours` | Converted: `uptime_s / 3600` |
+| `temperature` | `temp_cpu` | Direct copy |
+| `pluto_temp` | `pluto_temp` | Direct copy |
+| `zynq_temp` | `zynq_temp` | Direct copy |
+
+**Why the transformation?** DragonSync sends raw values (MB, seconds) for Home Assistant displays like "2.1 GB free". WarDragonAnalytics stores percentages for simpler comparison across kits.
+
+**Drone Fields (`wardragon/drones`):**
+For drones, DragonSync sends **both** naming conventions (`lat` AND `latitude`), so no transformation needed.
 
 ### Example Message Formats
 

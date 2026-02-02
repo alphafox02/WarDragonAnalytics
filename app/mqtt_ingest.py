@@ -292,16 +292,53 @@ class MQTTDatabaseWriter:
 
                 timestamp = self._parse_timestamp(status.get('timestamp'))
 
+                # Calculate memory percent from total/available if not provided directly
+                # DragonSync sends memory_total_mb and memory_available_mb
+                memory_percent = status.get('memory_percent')
+                if memory_percent is None:
+                    mem_total = self._safe_float(
+                        status.get('memory_total_mb') or status.get('memory_total')
+                    )
+                    mem_avail = self._safe_float(
+                        status.get('memory_available_mb') or status.get('memory_available')
+                    )
+                    if mem_total and mem_total > 0:
+                        memory_percent = ((mem_total - mem_avail) / mem_total) * 100
+
+                # Calculate disk percent from total/used if not provided directly
+                # DragonSync sends disk_total_mb and disk_used_mb
+                disk_percent = status.get('disk_percent')
+                if disk_percent is None:
+                    disk_total = self._safe_float(
+                        status.get('disk_total_mb') or status.get('disk_total')
+                    )
+                    disk_used = self._safe_float(
+                        status.get('disk_used_mb') or status.get('disk_used')
+                    )
+                    if disk_total and disk_total > 0:
+                        disk_percent = (disk_used / disk_total) * 100
+
+                # Convert uptime from seconds to hours if needed
+                # DragonSync sends uptime_s
+                uptime_hours = status.get('uptime_hours')
+                if uptime_hours is None:
+                    uptime_secs = self._safe_float(
+                        status.get('uptime_s') or status.get('uptime')
+                    )
+                    if uptime_secs is not None:
+                        uptime_hours = uptime_secs / 3600.0
+
                 conn.execute(query, {
                     'time': timestamp,
                     'kit_id': kit_id,
-                    'lat': self._safe_float(status.get('lat')),
-                    'lon': self._safe_float(status.get('lon')),
-                    'alt': self._safe_float(status.get('alt')),
+                    # DragonSync sends latitude/longitude/hae, also accept lat/lon/alt
+                    'lat': self._safe_float(status.get('latitude') or status.get('lat')),
+                    'lon': self._safe_float(status.get('longitude') or status.get('lon')),
+                    'alt': self._safe_float(status.get('hae') or status.get('alt')),
                     'cpu_percent': self._safe_float(status.get('cpu_usage') or status.get('cpu_percent')),
-                    'memory_percent': self._safe_float(status.get('memory_percent')),
-                    'disk_percent': self._safe_float(status.get('disk_percent')),
-                    'uptime_hours': self._safe_float(status.get('uptime_hours')),
+                    'memory_percent': self._safe_float(memory_percent),
+                    'disk_percent': self._safe_float(disk_percent),
+                    'uptime_hours': self._safe_float(uptime_hours),
                     'temp_cpu': self._safe_float(status.get('temperature') or status.get('temp_cpu')),
                     'temp_gpu': self._safe_float(status.get('temp_gpu')),
                     'pluto_temp': self._safe_float(status.get('pluto_temp')),
@@ -314,6 +351,22 @@ class MQTTDatabaseWriter:
                 return True
         except Exception as e:
             logger.error(f"Failed to insert system health: {e}")
+            return False
+
+    def update_kit_last_seen(self, kit_id: str) -> bool:
+        """Update kit's last_seen timestamp to keep it online"""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("""
+                    UPDATE kits SET
+                        last_seen = NOW(),
+                        status = 'online'
+                    WHERE kit_id = :kit_id
+                """), {'kit_id': kit_id})
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update kit last_seen for {kit_id}: {e}")
             return False
 
     def register_mqtt_kit(self, kit_id: str, name: str = None) -> bool:
@@ -358,7 +411,9 @@ class MQTTDatabaseWriter:
                             status = 'online'
                     """), {
                         'kit_id': kit_id,
-                        'name': name or f"MQTT Kit: {kit_id}"
+                        # Just use kit_id as name - it's already descriptive (e.g., "wardragon-SERIAL")
+                        # and the [M] badge in the UI shows it's MQTT
+                        'name': name or kit_id
                     })
                     conn.commit()
                     logger.info(f"Auto-registered new MQTT kit: {kit_id}")
@@ -504,12 +559,13 @@ class MQTTIngestService:
                     reconnect_interval = 5  # Reset on successful connection
 
                     # Subscribe to all DragonSync topics
+                    # Note: Only subscribe to /attrs for system - /availability sends plain strings, not JSON
                     topics = [
                         (MQTT_TOPIC_DRONES, 0),       # Aggregate drones
-                        (f"{MQTT_TOPIC_DRONE_PREFIX}#", 0),  # Per-drone topics
+                        (f"{MQTT_TOPIC_DRONE_PREFIX}#", 0),  # Per-drone topics (includes /attrs but filters by JSON)
                         (MQTT_TOPIC_AIRCRAFT, 0),    # ADS-B aircraft
                         (MQTT_TOPIC_SIGNALS, 0),     # FPV signals
-                        (MQTT_TOPIC_SYSTEM, 0),      # System status
+                        (f"{MQTT_TOPIC_SYSTEM}/attrs", 0),  # System status JSON only
                     ]
 
                     for topic, qos in topics:
@@ -553,10 +609,18 @@ class MQTTIngestService:
         try:
             topic = str(message.topic)
             payload = message.payload.decode('utf-8')
+
+            # Skip non-JSON topics (Home Assistant state/availability send plain strings)
+            # Includes: /availability, /state, /pilot_availability, /home_availability
+            if 'availability' in topic or topic.endswith('/state'):
+                return
+
             data = json.loads(payload)
 
-            # Extract kit_id from payload (DragonSync includes 'seen_by' or 'kit_id')
-            kit_id = data.get('seen_by') or data.get('kit_id') or data.get('uid')
+            # Extract kit_id from payload (DragonSync uses different fields per message type)
+            # - Drone/aircraft/signal messages use 'seen_by'
+            # - System attrs use 'id' (e.g., "wardragon-SERIAL")
+            kit_id = data.get('seen_by') or data.get('kit_id') or data.get('id') or data.get('uid')
 
             if not kit_id:
                 # Try to extract from topic for per-drone messages
@@ -582,23 +646,30 @@ class MQTTIngestService:
                 await self._handle_aircraft(kit_id, data)
             elif topic == MQTT_TOPIC_SIGNALS:
                 await self._handle_signal(kit_id, data)
-            elif topic == MQTT_TOPIC_SYSTEM:
+            elif topic == f"{MQTT_TOPIC_SYSTEM}/attrs":
+                # DragonSync system health (JSON)
                 await self._handle_system(kit_id, data)
             else:
                 logger.debug(f"Unhandled topic: {topic}")
 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in message: {e}")
+            logger.error(f"Invalid JSON on topic {topic}: {payload[:100]!r}")
             self.stats['errors'] += 1
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
             self.stats['errors'] += 1
 
     async def _handle_drones(self, kit_id: str, data: Dict):
-        """Handle aggregate drones message (JSON array of drones)"""
-        drones = data.get('drones', [])
+        """Handle aggregate drones message - can be single drone dict, list, or wrapped"""
+        # DragonSync publishes individual drone dicts to aggregate topic
+        # Handle: single dict, list of dicts, or {"drones": [...]}
         if isinstance(data, list):
             drones = data
+        elif 'drones' in data:
+            drones = data.get('drones', [])
+        else:
+            # Single drone dict (this is what DragonSync sends)
+            drones = [data]
 
         for drone in drones:
             if self.db.insert_drone(kit_id, drone):
@@ -645,6 +716,8 @@ class MQTTIngestService:
         """Handle system status message"""
         if self.db.insert_system_health(kit_id, data):
             self.stats['system_received'] += 1
+            # Update kit's last_seen timestamp to keep it 'online'
+            self.db.update_kit_last_seen(kit_id)
             logger.debug(f"Kit {kit_id}: Received system status via MQTT")
 
     async def _log_stats(self):
