@@ -1917,7 +1917,7 @@ function updateKitMarkers() {
                 color: white;
                 text-shadow: 1px 1px 1px #000;
                 box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-            ">K</div>`,
+            ">W</div>`,
             iconSize: [24, 24],
             iconAnchor: [12, 12]
         });
