@@ -26,6 +26,12 @@ let activeFilters = {
 };
 let drawnItems;
 
+// Table sorting state
+let currentSort = {
+    column: 'time',
+    descending: true  // Default: newest first
+};
+
 // Flight path tracking
 let flightPaths = {};  // Map of drone_id -> { polyline, markers }
 let activeFlightPath = null;  // Currently displayed flight path drone_id
@@ -1398,6 +1404,77 @@ function clearEstimation() {
 }
 
 // =============================================================================
+// TABLE SORTING
+// =============================================================================
+
+// Sort data in place according to currentSort state
+function sortData(data) {
+    const col = currentSort.column;
+    const desc = currentSort.descending;
+
+    data.sort((a, b) => {
+        let valA = a[col];
+        let valB = b[col];
+
+        // Handle time column specially
+        if (col === 'time') {
+            valA = new Date(valA || 0);
+            valB = new Date(valB || 0);
+        }
+        // Handle numeric columns
+        else if (['alt', 'speed', 'lat', 'lon'].includes(col)) {
+            valA = valA ?? -Infinity;
+            valB = valB ?? -Infinity;
+        }
+        // Handle string columns
+        else {
+            valA = (valA || '').toString().toLowerCase();
+            valB = (valB || '').toString().toLowerCase();
+        }
+
+        if (valA < valB) return desc ? 1 : -1;
+        if (valA > valB) return desc ? -1 : 1;
+        return 0;
+    });
+}
+
+// Handle column header click for sorting
+function sortTable(column) {
+    // If clicking same column, toggle direction
+    if (currentSort.column === column) {
+        currentSort.descending = !currentSort.descending;
+    } else {
+        // New column - default to descending for time/numbers, ascending for text
+        currentSort.column = column;
+        currentSort.descending = ['time', 'alt', 'speed'].includes(column);
+    }
+
+    // Update header visuals
+    updateSortIndicators();
+
+    // Re-sort and redisplay
+    sortData(currentData);
+    const displayData = applyActiveFilters(currentData);
+    updateTable(displayData);
+}
+
+// Update sort arrow indicators in table headers
+function updateSortIndicators() {
+    document.querySelectorAll('th.sortable').forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        const col = th.dataset.sort;
+
+        if (col === currentSort.column) {
+            th.classList.add('active');
+            arrow.textContent = currentSort.descending ? '▼' : '▲';
+        } else {
+            th.classList.remove('active');
+            arrow.textContent = '';
+        }
+    });
+}
+
+// =============================================================================
 
 // Update table
 function updateTable(data) {
@@ -2214,9 +2291,9 @@ async function fetchData() {
             }
         }
 
-        // Sort by time descending (newest first) for consistent table display
-        // API returns data sorted by drone_id (for DISTINCT ON), not by time
-        allData.sort((a, b) => new Date(b.time) - new Date(a.time));
+        // Sort data according to current sort state
+        // API returns data sorted by drone_id (for DISTINCT ON), not user's preferred order
+        sortData(allData);
 
         currentData = allData;
 

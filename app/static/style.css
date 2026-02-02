@@ -180,6 +180,14 @@ body.light-theme .table-container tr:hover {
     background: #f8fff8;
 }
 
+body.light-theme .table-container th.sortable:hover {
+    background: rgba(0, 128, 0, 0.1);
+}
+
+body.light-theme .table-container th.sortable.active {
+    background: rgba(0, 128, 0, 0.15);
+}
+
 body.light-theme .threat-card {
     border-color: #ddd;
 }
@@ -991,6 +999,26 @@ table th {
     font-weight: bold;
     text-transform: uppercase;
     border-bottom: 2px solid #00ff00;
+}
+
+table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+
+table th.sortable:hover {
+    background: rgba(0, 255, 0, 0.1);
+}
+
+table th.sortable.active {
+    background: rgba(0, 255, 0, 0.15);
+}
+
+table th .sort-arrow {
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0.8;
 }
 
 table td {

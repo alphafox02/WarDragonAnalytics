@@ -351,16 +351,16 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>Kit</th>
-                            <th>Drone ID</th>
-                            <th>Type</th>
-                            <th>RID Make</th>
-                            <th>RID Model</th>
+                            <th class="sortable active" data-sort="time" onclick="sortTable('time')">Time <span class="sort-arrow">▼</span></th>
+                            <th class="sortable" data-sort="kit_id" onclick="sortTable('kit_id')">Kit <span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="drone_id" onclick="sortTable('drone_id')">Drone ID <span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="track_type" onclick="sortTable('track_type')">Type <span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="rid_make" onclick="sortTable('rid_make')">RID Make <span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="rid_model" onclick="sortTable('rid_model')">RID Model <span class="sort-arrow"></span></th>
                             <th>Lat</th>
                             <th>Lon</th>
-                            <th>Alt (m)</th>
-                            <th>Speed (m/s)</th>
+                            <th class="sortable" data-sort="alt" onclick="sortTable('alt')">Alt (m) <span class="sort-arrow"></span></th>
+                            <th class="sortable" data-sort="speed" onclick="sortTable('speed')">Speed (m/s) <span class="sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="tracks-table">
