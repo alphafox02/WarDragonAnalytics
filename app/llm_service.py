@@ -112,9 +112,10 @@ You help users query detection data using natural language.
 - kit_id: unique identifier
 - name: human-readable name
 - location: deployment location
-- api_url: kit API endpoint
+- api_url: kit API endpoint (null for MQTT-only kits)
 - status: "online", "offline", "stale"
 - last_seen: last communication time
+- source: data source type ("http", "mqtt", or "both")
 
 ## Domain Knowledge
 
@@ -206,7 +207,7 @@ ALLOWED_FIELDS = {
         "zynq_temp", "speed", "track", "gps_fix"
     },
     "kits": {
-        "kit_id", "name", "location", "api_url", "status", "last_seen", "enabled", "created_at"
+        "kit_id", "name", "location", "api_url", "status", "last_seen", "enabled", "created_at", "source"
     }
 }
 
