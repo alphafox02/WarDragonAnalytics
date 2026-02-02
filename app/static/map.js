@@ -2215,7 +2215,33 @@ async function fetchPatterns() {
         patternData.repeated = results[0]?.drones || [];
         patternData.coordinated = results[1]?.groups || [];
         patternData.pilotReuse = results[2]?.pilots || [];
-        patternData.anomalies = results[3]?.anomalies || [];
+
+        // Group raw anomalies by drone_id and aggregate anomaly_type into anomaly_types array
+        const rawAnomalies = results[3]?.anomalies || [];
+        const anomalyMap = new Map();
+        rawAnomalies.forEach(a => {
+            if (!anomalyMap.has(a.drone_id)) {
+                anomalyMap.set(a.drone_id, {
+                    drone_id: a.drone_id,
+                    anomaly_types: [],
+                    severity: a.severity,
+                    details: a.details,
+                    timestamp: a.timestamp
+                });
+            }
+            const entry = anomalyMap.get(a.drone_id);
+            if (a.anomaly_type && !entry.anomaly_types.includes(a.anomaly_type)) {
+                entry.anomaly_types.push(a.anomaly_type);
+            }
+            // Keep highest severity
+            if (a.severity === 'critical' ||
+                (a.severity === 'high' && entry.severity !== 'critical') ||
+                (a.severity === 'medium' && entry.severity === 'low')) {
+                entry.severity = a.severity;
+            }
+        });
+        patternData.anomalies = Array.from(anomalyMap.values());
+
         patternData.multiKit = results[4]?.multi_kit_detections || [];
 
         updateThreatCards();
