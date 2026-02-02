@@ -336,9 +336,9 @@ DragonSync's MQTT payload uses different field names than its HTTP API for Home 
 | `memory_total_mb`, `memory_available_mb` | `memory_percent` | Calculated: `(total-avail)/total * 100` |
 | `disk_total_mb`, `disk_used_mb` | `disk_percent` | Calculated: `used/total * 100` |
 | `uptime_s` | `uptime_hours` | Converted: `uptime_s / 3600` |
-| `temperature` | `temp_cpu` | Direct copy |
-| `pluto_temp` | `pluto_temp` | Direct copy |
-| `zynq_temp` | `zynq_temp` | Direct copy |
+| `temperature_c` | `temp_cpu` | Direct copy |
+| `pluto_temp_c` | `pluto_temp` | Direct copy |
+| `zynq_temp_c` | `zynq_temp` | Direct copy |
 
 **Why the transformation?** DragonSync sends raw values (MB, seconds) for Home Assistant displays like "2.1 GB free". WarDragonAnalytics stores percentages for simpler comparison across kits.
 

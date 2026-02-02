@@ -339,10 +339,11 @@ class MQTTDatabaseWriter:
                     'memory_percent': self._safe_float(memory_percent),
                     'disk_percent': self._safe_float(disk_percent),
                     'uptime_hours': self._safe_float(uptime_hours),
-                    'temp_cpu': self._safe_float(status.get('temperature') or status.get('temp_cpu')),
+                    # DragonSync sends temperature_c, pluto_temp_c, zynq_temp_c
+                    'temp_cpu': self._safe_float(status.get('temperature_c') or status.get('temperature') or status.get('temp_cpu')),
                     'temp_gpu': self._safe_float(status.get('temp_gpu')),
-                    'pluto_temp': self._safe_float(status.get('pluto_temp')),
-                    'zynq_temp': self._safe_float(status.get('zynq_temp')),
+                    'pluto_temp': self._safe_float(status.get('pluto_temp_c') or status.get('pluto_temp')),
+                    'zynq_temp': self._safe_float(status.get('zynq_temp_c') or status.get('zynq_temp')),
                     'speed': self._safe_float(status.get('speed')),
                     'track': self._safe_float(status.get('track')),
                     'gps_fix': status.get('gps_fix')
