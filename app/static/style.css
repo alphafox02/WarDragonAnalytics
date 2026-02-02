@@ -177,6 +177,11 @@ body.light-theme .table-container {
     border-color: #c0c0b8;
 }
 
+body.light-theme .threat-summary {
+    background: #f4f4f0;
+    border-bottom-color: #c0c0b8;
+}
+
 body.light-theme .threat-card {
     border-color: #c0c0b8;
 }
