@@ -420,18 +420,50 @@ Enable auto-refresh for live operations:
 - **"Show Coordinated"**: Filter to drones in swarm groups
 - **RID Watchlist**: Show only drones on watchlist
 - **Geographic Filter**: Draw polygon on map to filter by area
+- **Track Type Toggles**: Show/hide Drones, Aircraft, and Signals independently
 
 #### 3. Pattern Highlighting
 - **Coordinated drones**: Same color/icon grouping
 - **Repeated drones**: Numbered markers showing appearance sequence
 - **Operator reuse**: Drones from same operator linked with lines
 - **Multi-kit detections**: Drone markers show kit count badge
+- **Signal markers**: Orange "S" icons for FPV signal detections
 
 #### 4. Threat Summary Cards (Left Panel)
 - **Active Threats**: Count of current high-priority drones
 - **Repeated Contacts**: Count of drones with 3+ appearances
 - **Multi-Kit Detections**: Count of triangulation opportunities
 - **Anomalies Detected**: Count of unusual behaviors in last hour
+
+#### 5. Stats Bar (Top)
+- **Total Tracks**: All detected objects (drones + aircraft)
+- **Drones**: Count of Remote ID/DroneID detections
+- **Aircraft**: Count of ADS-B aircraft tracks
+- **Signals**: Count of FPV signal detections
+- **Active Kits**: Number of online kits reporting data
+
+#### 6. Tabbed Data Table (Bottom)
+The data table at the bottom of the screen provides detailed information in three switchable tabs:
+
+**Drones Tab** 🛸
+- Columns: Time, Kit, Drone ID, Make, Model, Lat/Lon, Altitude, Speed
+- Click any row to zoom map to that drone's location
+- Rows highlighted for watchlist items, anomalies, and multi-kit detections
+
+**Aircraft Tab** ✈️
+- Columns: Time, Kit, ICAO/ID, Callsign, Lat/Lon, Altitude, Speed, Heading
+- Click any row to zoom map to aircraft location
+
+**Signals Tab** 📡
+- Columns: Time, Kit, Frequency (MHz), Power (dBm), PAL %, NTSC %, Detection Type, Lat/Lon
+- Click any row to zoom to signal location (if GPS available)
+- Rows dimmed if no GPS coordinates (kit lacked GPS lock)
+
+**Table Features:**
+- **Sorting**: Click any column header to sort ascending/descending
+- **Pagination**: 25, 50, or 100 items per page (configurable dropdown)
+- **Page Navigation**: Shows "1-50 of 234" with page buttons
+- **Tab Badges**: Each tab shows item count for quick reference
 
 ### Tactical Workflow
 

@@ -338,7 +338,11 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
       "lat": 37.7749,
       "lon": -122.4194,
       "alt": 10.0,
-      "detection_type": "analog_fpv"
+      "detection_type": "analog",
+      "pal_conf": 0.85,
+      "ntsc_conf": 0.12,
+      "source": "suscli",
+      "signal_type": "fpv"
     }
   ],
   "count": 1,
@@ -346,9 +350,22 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
 }
 ```
 
+**Response Fields:**
+- `time` - Detection timestamp (ISO 8601)
+- `kit_id` - Kit that detected the signal
+- `freq_mhz` - Center frequency in MHz
+- `power_dbm` - Signal power in dBm (may be null)
+- `bandwidth_mhz` - Signal bandwidth in MHz
+- `lat`, `lon`, `alt` - Kit GPS position at detection time (may be 0 if no GPS lock)
+- `detection_type` - Signal classification (see below)
+- `pal_conf` - PAL video format confidence (0.0-1.0)
+- `ntsc_conf` - NTSC video format confidence (0.0-1.0)
+- `source` - Detection source (e.g., "suscli")
+- `signal_type` - General signal category
+
 **Detection Types:**
 - `analog` - 5.8GHz analog FPV video
-- `dji` - DJI digital FPV (OcuSync)
+- `dji_digital` - DJI digital FPV (OcuSync)
 
 **Status Codes:**
 - `200 OK` - Success

@@ -242,8 +242,16 @@ class MQTTDatabaseWriter:
                         ntsc_conf = EXCLUDED.ntsc_conf
                 """)
 
-                timestamp = self._parse_timestamp(signal.get('timestamp'))
+                # Handle timestamp: 'timestamp' or 'observed_at'
+                timestamp = self._parse_timestamp(signal.get('timestamp') or signal.get('observed_at'))
+
+                # Handle frequency: 'freq_mhz' or 'center_hz' (convert Hz to MHz)
                 freq = self._safe_float(signal.get('freq_mhz'))
+                if not freq:
+                    center_hz = self._safe_float(signal.get('center_hz'))
+                    if center_hz:
+                        freq = center_hz / 1e6
+
                 bandwidth_hz = signal.get('bandwidth_hz', 0)
                 bandwidth_mhz = bandwidth_hz / 1e6 if bandwidth_hz else self._safe_float(signal.get('bandwidth_mhz'))
 
@@ -257,8 +265,8 @@ class MQTTDatabaseWriter:
                     'lon': self._safe_float(signal.get('sensor_lon') or signal.get('lon')),
                     'alt': self._safe_float(signal.get('sensor_alt') or signal.get('alt')),
                     'detection_type': signal.get('detection_type', 'analog'),
-                    'pal_conf': self._safe_float(signal.get('pal_conf')),
-                    'ntsc_conf': self._safe_float(signal.get('ntsc_conf')),
+                    'pal_conf': self._safe_float(signal.get('pal_conf') or signal.get('pal')),
+                    'ntsc_conf': self._safe_float(signal.get('ntsc_conf') or signal.get('ntsc')),
                     'source': signal.get('source'),
                     'signal_type': signal.get('signal_type')
                 })

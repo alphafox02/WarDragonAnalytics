@@ -231,6 +231,9 @@
                     <label>
                         <input type="checkbox" id="show-aircraft" checked> Aircraft
                     </label>
+                    <label>
+                        <input type="checkbox" id="show-signals" checked onchange="toggleSignals(this.checked)"> Signals (S)
+                    </label>
                 </div>
             </div>
 
@@ -326,6 +329,10 @@
                     <div class="stat-label">Aircraft</div>
                     <div class="stat-value" id="total-aircraft">0</div>
                 </div>
+                <div class="stat-badge signal-badge">
+                    <div class="stat-label">Signals</div>
+                    <div class="stat-value" id="total-signals">0</div>
+                </div>
                 <div class="stat-badge">
                     <div class="stat-label">Active Kits</div>
                     <div class="stat-value" id="active-kits">0</div>
@@ -346,29 +353,131 @@
                 </div>
             </div>
 
-            <!-- Table -->
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th class="sortable active" data-sort="time" onclick="sortTable('time')">Time <span class="sort-arrow">▼</span></th>
-                            <th class="sortable" data-sort="kit_id" onclick="sortTable('kit_id')">Kit <span class="sort-arrow"></span></th>
-                            <th class="sortable" data-sort="drone_id" onclick="sortTable('drone_id')">Drone ID <span class="sort-arrow"></span></th>
-                            <th class="sortable" data-sort="track_type" onclick="sortTable('track_type')">Type <span class="sort-arrow"></span></th>
-                            <th class="sortable" data-sort="rid_make" onclick="sortTable('rid_make')">RID Make <span class="sort-arrow"></span></th>
-                            <th class="sortable" data-sort="rid_model" onclick="sortTable('rid_model')">RID Model <span class="sort-arrow"></span></th>
-                            <th>Lat</th>
-                            <th>Lon</th>
-                            <th class="sortable" data-sort="alt" onclick="sortTable('alt')">Alt (m) <span class="sort-arrow"></span></th>
-                            <th class="sortable" data-sort="speed" onclick="sortTable('speed')">Speed (m/s) <span class="sort-arrow"></span></th>
-                        </tr>
-                    </thead>
-                    <tbody id="tracks-table">
-                        <tr>
-                            <td colspan="10" style="text-align: center; color: #aaa;">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <!-- Tabbed Data Table -->
+            <div class="data-table-section">
+                <!-- Tab Navigation -->
+                <div class="data-tabs">
+                    <button class="data-tab active" data-tab="drones" onclick="switchDataTab('drones')">
+                        <span class="tab-icon">🛸</span>
+                        <span class="tab-label">Drones</span>
+                        <span class="tab-count" id="tab-drone-count">0</span>
+                    </button>
+                    <button class="data-tab" data-tab="aircraft" onclick="switchDataTab('aircraft')">
+                        <span class="tab-icon">✈️</span>
+                        <span class="tab-label">Aircraft</span>
+                        <span class="tab-count" id="tab-aircraft-count">0</span>
+                    </button>
+                    <button class="data-tab" data-tab="signals" onclick="switchDataTab('signals')">
+                        <span class="tab-icon">📡</span>
+                        <span class="tab-label">Signals</span>
+                        <span class="tab-count" id="tab-signal-count">0</span>
+                    </button>
+                </div>
+
+                <!-- Drones Table -->
+                <div class="data-table-panel active" id="drones-panel">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th class="sortable active" data-sort="time" data-table="drones" onclick="sortTable('time', 'drones')">Time <span class="sort-arrow">▼</span></th>
+                                    <th class="sortable" data-sort="kit_id" data-table="drones" onclick="sortTable('kit_id', 'drones')">Kit <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="drone_id" data-table="drones" onclick="sortTable('drone_id', 'drones')">Drone ID <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="rid_make" data-table="drones" onclick="sortTable('rid_make', 'drones')">Make <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="rid_model" data-table="drones" onclick="sortTable('rid_model', 'drones')">Model <span class="sort-arrow"></span></th>
+                                    <th>Lat</th>
+                                    <th>Lon</th>
+                                    <th class="sortable" data-sort="alt" data-table="drones" onclick="sortTable('alt', 'drones')">Alt (m) <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="speed" data-table="drones" onclick="sortTable('speed', 'drones')">Speed (m/s) <span class="sort-arrow"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="drones-table">
+                                <tr><td colspan="9" style="text-align: center; color: #aaa;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-pagination" id="drones-pagination">
+                        <div class="pagination-info">
+                            <span id="drones-page-info">Showing 0 of 0</span>
+                            <select class="page-size-select" id="drones-page-size" onchange="changePageSize('drones', this.value)">
+                                <option value="25">25 per page</option>
+                                <option value="50" selected>50 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
+                        <div class="pagination-controls" id="drones-page-controls"></div>
+                    </div>
+                </div>
+
+                <!-- Aircraft Table -->
+                <div class="data-table-panel" id="aircraft-panel">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th class="sortable active" data-sort="time" data-table="aircraft" onclick="sortTable('time', 'aircraft')">Time <span class="sort-arrow">▼</span></th>
+                                    <th class="sortable" data-sort="kit_id" data-table="aircraft" onclick="sortTable('kit_id', 'aircraft')">Kit <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="drone_id" data-table="aircraft" onclick="sortTable('drone_id', 'aircraft')">ICAO/ID <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="callsign" data-table="aircraft" onclick="sortTable('callsign', 'aircraft')">Callsign <span class="sort-arrow"></span></th>
+                                    <th>Lat</th>
+                                    <th>Lon</th>
+                                    <th class="sortable" data-sort="alt" data-table="aircraft" onclick="sortTable('alt', 'aircraft')">Alt (m) <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="speed" data-table="aircraft" onclick="sortTable('speed', 'aircraft')">Speed (m/s) <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="heading" data-table="aircraft" onclick="sortTable('heading', 'aircraft')">Heading <span class="sort-arrow"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="aircraft-table">
+                                <tr><td colspan="9" style="text-align: center; color: #aaa;">No aircraft data</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-pagination" id="aircraft-pagination">
+                        <div class="pagination-info">
+                            <span id="aircraft-page-info">Showing 0 of 0</span>
+                            <select class="page-size-select" id="aircraft-page-size" onchange="changePageSize('aircraft', this.value)">
+                                <option value="25">25 per page</option>
+                                <option value="50" selected>50 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
+                        <div class="pagination-controls" id="aircraft-page-controls"></div>
+                    </div>
+                </div>
+
+                <!-- Signals Table -->
+                <div class="data-table-panel" id="signals-panel">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th class="sortable active" data-sort="time" data-table="signals" onclick="sortTable('time', 'signals')">Time <span class="sort-arrow">▼</span></th>
+                                    <th class="sortable" data-sort="kit_id" data-table="signals" onclick="sortTable('kit_id', 'signals')">Kit <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="freq_mhz" data-table="signals" onclick="sortTable('freq_mhz', 'signals')">Freq (MHz) <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="power_dbm" data-table="signals" onclick="sortTable('power_dbm', 'signals')">Power (dBm) <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="pal_conf" data-table="signals" onclick="sortTable('pal_conf', 'signals')">PAL % <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="ntsc_conf" data-table="signals" onclick="sortTable('ntsc_conf', 'signals')">NTSC % <span class="sort-arrow"></span></th>
+                                    <th class="sortable" data-sort="detection_type" data-table="signals" onclick="sortTable('detection_type', 'signals')">Type <span class="sort-arrow"></span></th>
+                                    <th>Lat</th>
+                                    <th>Lon</th>
+                                </tr>
+                            </thead>
+                            <tbody id="signals-table">
+                                <tr><td colspan="9" style="text-align: center; color: #aaa;">No signal data</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-pagination" id="signals-pagination">
+                        <div class="pagination-info">
+                            <span id="signals-page-info">Showing 0 of 0</span>
+                            <select class="page-size-select" id="signals-page-size" onchange="changePageSize('signals', this.value)">
+                                <option value="25">25 per page</option>
+                                <option value="50" selected>50 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
+                        <div class="pagination-controls" id="signals-page-controls"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -145,6 +145,10 @@ body.light-theme .stat-badge .value {
     color: #006600;
 }
 
+body.light-theme .stat-badge.signal-badge .stat-value {
+    color: #cc5500;
+}
+
 body.light-theme .legend {
     background: rgba(244, 244, 240, 0.95);
     color: #333;
@@ -175,6 +179,66 @@ body.light-theme .kit-list-item:hover {
 
 body.light-theme .table-container {
     border-color: #c0c0b8;
+}
+
+body.light-theme .data-table-section {
+    border-top-color: #c0c0b8;
+}
+
+body.light-theme .data-tabs {
+    background: #e8e8e4;
+    border-bottom-color: #c0c0b8;
+}
+
+body.light-theme .data-tab {
+    color: #666;
+}
+
+body.light-theme .data-tab:hover {
+    color: #333;
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body.light-theme .data-tab.active {
+    color: #007700;
+    border-bottom-color: #007700;
+    background: rgba(0, 119, 0, 0.1);
+}
+
+body.light-theme .data-tab .tab-count {
+    background: #d0d0cc;
+    color: #555;
+}
+
+body.light-theme .data-tab.active .tab-count {
+    background: rgba(0, 119, 0, 0.2);
+    color: #007700;
+}
+
+body.light-theme .table-pagination {
+    background: #e8e8e4;
+    border-top-color: #c0c0b8;
+    color: #666;
+}
+
+body.light-theme .pagination-btn {
+    background: #d0d0cc;
+    color: #333;
+}
+
+body.light-theme .pagination-btn:hover:not(:disabled) {
+    background: #c0c0bc;
+}
+
+body.light-theme .pagination-btn.active {
+    background: #007700;
+    color: #fff;
+}
+
+body.light-theme .page-size-select {
+    background: #d0d0cc;
+    border-color: #b0b0ac;
+    color: #333;
 }
 
 body.light-theme .threat-summary {
@@ -962,6 +1026,15 @@ body.light-theme .track-row.multi-kit.triangulation {
     margin-top: 5px;
 }
 
+/* Signal badge special styling */
+.stat-badge.signal-badge {
+    border-left-color: #ff6600;
+}
+
+.stat-badge.signal-badge .stat-value {
+    color: #ff6600;
+}
+
 /* Map container */
 .map-container {
     flex: 1;
@@ -1090,12 +1163,144 @@ body.light-theme .empty-state-filters .filter-tag {
     to { transform: rotate(360deg); }
 }
 
+/* Data Table Section with Tabs */
+.data-table-section {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid #3a3a3a;
+}
+
+/* Tab Navigation */
+.data-tabs {
+    display: flex;
+    background: #1a1a1a;
+    padding: 0;
+    gap: 0;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.data-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-bottom: 2px solid transparent;
+    position: relative;
+}
+
+.data-tab:hover {
+    color: #ccc;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.data-tab.active {
+    color: #00ff00;
+    border-bottom-color: #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.data-tab .tab-icon {
+    font-size: 14px;
+}
+
+.data-tab .tab-label {
+    font-weight: 500;
+}
+
+.data-tab .tab-count {
+    background: #3a3a3a;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 20px;
+    text-align: center;
+}
+
+.data-tab.active .tab-count {
+    background: rgba(0, 255, 0, 0.3);
+    color: #00ff00;
+}
+
+/* Table panels - hidden by default */
+.data-table-panel {
+    display: none;
+}
+
+.data-table-panel.active {
+    display: block;
+}
+
 /* Table container */
 .table-container {
-    height: 250px;
+    height: 220px;
     background: #2a2a2a;
-    border-top: 1px solid #3a3a3a;
     overflow: auto;
+}
+
+/* Pagination controls */
+.table-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #3a3a3a;
+    font-size: 12px;
+    color: #888;
+}
+
+.pagination-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pagination-btn {
+    background: #3a3a3a;
+    border: none;
+    color: #ccc;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.2s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: #4a4a4a;
+    color: #fff;
+}
+
+.pagination-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.pagination-btn.active {
+    background: #00aa00;
+    color: #fff;
+}
+
+.page-size-select {
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    color: #ccc;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
 }
 
 table {

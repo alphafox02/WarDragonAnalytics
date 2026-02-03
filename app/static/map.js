@@ -26,11 +26,25 @@ let activeFilters = {
 };
 let drawnItems;
 
-// Table sorting state
-let currentSort = {
-    column: 'time',
-    descending: true  // Default: newest first
+// Active data tab
+let activeDataTab = 'drones';
+
+// Table sorting state per tab
+let tableSortState = {
+    drones: { column: 'time', descending: true },
+    aircraft: { column: 'time', descending: true },
+    signals: { column: 'time', descending: true }
 };
+
+// Pagination state per tab
+let tablePagination = {
+    drones: { page: 1, pageSize: 50, total: 0 },
+    aircraft: { page: 1, pageSize: 50, total: 0 },
+    signals: { page: 1, pageSize: 50, total: 0 }
+};
+
+// Legacy alias for backwards compatibility
+let currentSort = tableSortState.drones;
 
 // Flight path tracking
 let flightPaths = {};  // Map of drone_id -> { polyline, markers }
@@ -46,6 +60,7 @@ let pilotLines = [];    // Lines from drone to pilot
 let homeLines = [];     // Lines from drone to home
 let showPilotLocations = true;  // Toggle for pilot locations
 let showHomeLocations = true;   // Toggle for home locations
+let showSignals = true;         // Toggle for FPV signal markers
 
 // RSSI Location estimation tracking
 let estimationMarker = null;  // Estimated location marker
@@ -56,6 +71,10 @@ let activeEstimation = null;  // Currently displayed estimation drone_id
 
 // Kit location markers
 let kitMarkers = [];  // Kit location markers on map
+
+// Signal (FPV) markers
+let signalMarkers = [];  // FPV signal detection markers on map
+let currentSignals = [];  // Current signal data
 
 // Kit color mapping
 const KIT_COLORS = [
@@ -848,6 +867,18 @@ function toggleHomeLocations(show) {
     updateMap(currentData);
 }
 
+// Toggle FPV signal marker visibility
+function toggleSignals(show) {
+    showSignals = show;
+    if (show) {
+        updateSignalMarkers();
+    } else {
+        // Clear signal markers from map
+        signalMarkers.forEach(m => map.removeLayer(m));
+        signalMarkers = [];
+    }
+}
+
 // Fit map bounds to show all drones (manual trigger)
 function fitToAllDrones() {
     if (markers.length === 0) {
@@ -1438,35 +1469,86 @@ function sortData(data) {
     });
 }
 
-// Handle column header click for sorting
-function sortTable(column) {
-    // If clicking same column, toggle direction
-    if (currentSort.column === column) {
-        currentSort.descending = !currentSort.descending;
-    } else {
-        // New column - default to descending for time/numbers, ascending for text
-        currentSort.column = column;
-        currentSort.descending = ['time', 'alt', 'speed'].includes(column);
-    }
+// =============================================================================
+// TAB SWITCHING
+// =============================================================================
 
-    // Update header visuals
-    updateSortIndicators();
+// Switch between data tabs (drones, aircraft, signals)
+function switchDataTab(tabName) {
+    activeDataTab = tabName;
 
-    // Re-sort and redisplay
-    sortData(currentData);
-    const displayData = applyActiveFilters(currentData);
-    updateTable(displayData);
+    // Update tab button states
+    document.querySelectorAll('.data-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabName);
+    });
+
+    // Update panel visibility
+    document.querySelectorAll('.data-table-panel').forEach(panel => {
+        panel.classList.toggle('active', panel.id === `${tabName}-panel`);
+    });
+
+    // Refresh the active table
+    refreshActiveTable();
 }
 
-// Update sort arrow indicators in table headers
-function updateSortIndicators() {
-    document.querySelectorAll('th.sortable').forEach(th => {
+// Refresh the currently active table with current data
+function refreshActiveTable() {
+    switch (activeDataTab) {
+        case 'drones':
+            const drones = currentData.filter(d => d.track_type === 'drone' || !d.track_type);
+            const filteredDrones = applyActiveFilters(drones);
+            updateDronesTable(filteredDrones);
+            break;
+        case 'aircraft':
+            const aircraft = currentData.filter(d => d.track_type === 'aircraft');
+            updateAircraftTable(aircraft);
+            break;
+        case 'signals':
+            updateSignalsTable(currentSignals);
+            break;
+    }
+}
+
+// =============================================================================
+// TABLE SORTING
+// =============================================================================
+
+// Handle column header click for sorting
+function sortTable(column, tableType = 'drones') {
+    const sortState = tableSortState[tableType];
+
+    // If clicking same column, toggle direction
+    if (sortState.column === column) {
+        sortState.descending = !sortState.descending;
+    } else {
+        // New column - default to descending for time/numbers, ascending for text
+        sortState.column = column;
+        sortState.descending = ['time', 'alt', 'speed', 'freq_mhz', 'power_dbm', 'pal_conf', 'ntsc_conf', 'heading'].includes(column);
+    }
+
+    // Reset to page 1 when sorting changes
+    tablePagination[tableType].page = 1;
+
+    // Update header visuals for this table
+    updateSortIndicators(tableType);
+
+    // Refresh the table
+    refreshActiveTable();
+}
+
+// Update sort arrow indicators in table headers for a specific table
+function updateSortIndicators(tableType = 'drones') {
+    const sortState = tableSortState[tableType];
+    const panel = document.getElementById(`${tableType}-panel`);
+    if (!panel) return;
+
+    panel.querySelectorAll('th.sortable').forEach(th => {
         const arrow = th.querySelector('.sort-arrow');
         const col = th.dataset.sort;
 
-        if (col === currentSort.column) {
+        if (col === sortState.column) {
             th.classList.add('active');
-            arrow.textContent = currentSort.descending ? '▼' : '▲';
+            arrow.textContent = sortState.descending ? '▼' : '▲';
         } else {
             th.classList.remove('active');
             arrow.textContent = '';
@@ -1474,19 +1556,139 @@ function updateSortIndicators() {
     });
 }
 
+// Sort data array by current sort settings for a table type
+function sortTableData(data, tableType) {
+    const sortState = tableSortState[tableType];
+    const col = sortState.column;
+    const desc = sortState.descending;
+
+    return [...data].sort((a, b) => {
+        let valA = a[col];
+        let valB = b[col];
+
+        // Handle null/undefined
+        if (valA == null && valB == null) return 0;
+        if (valA == null) return desc ? 1 : -1;
+        if (valB == null) return desc ? -1 : 1;
+
+        // String comparison for text fields
+        if (typeof valA === 'string' && typeof valB === 'string') {
+            const cmp = valA.localeCompare(valB);
+            return desc ? -cmp : cmp;
+        }
+
+        // Numeric comparison
+        if (valA < valB) return desc ? 1 : -1;
+        if (valA > valB) return desc ? -1 : 1;
+        return 0;
+    });
+}
+
+// =============================================================================
+// PAGINATION
 // =============================================================================
 
-// Update table
-function updateTable(data) {
-    const tbody = document.getElementById('tracks-table');
+// Change page size for a table
+function changePageSize(tableType, size) {
+    tablePagination[tableType].pageSize = parseInt(size);
+    tablePagination[tableType].page = 1;
+    refreshActiveTable();
+}
+
+// Go to a specific page
+function goToPage(tableType, page) {
+    const pag = tablePagination[tableType];
+    const maxPage = Math.ceil(pag.total / pag.pageSize) || 1;
+    pag.page = Math.max(1, Math.min(page, maxPage));
+    refreshActiveTable();
+}
+
+// Update pagination controls for a table
+function updatePaginationControls(tableType, total) {
+    const pag = tablePagination[tableType];
+    pag.total = total;
+
+    const pageSize = pag.pageSize;
+    const currentPage = pag.page;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+
+    // Ensure current page is valid
+    if (currentPage > totalPages) {
+        pag.page = totalPages;
+    }
+
+    // Update page info
+    const start = total === 0 ? 0 : ((pag.page - 1) * pageSize) + 1;
+    const end = Math.min(pag.page * pageSize, total);
+    document.getElementById(`${tableType}-page-info`).textContent =
+        `Showing ${start}-${end} of ${total}`;
+
+    // Build pagination buttons
+    const controls = document.getElementById(`${tableType}-page-controls`);
+    controls.innerHTML = '';
+
+    if (totalPages <= 1) return;
+
+    // Previous button
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'pagination-btn';
+    prevBtn.textContent = '‹';
+    prevBtn.disabled = pag.page === 1;
+    prevBtn.onclick = () => goToPage(tableType, pag.page - 1);
+    controls.appendChild(prevBtn);
+
+    // Page number buttons (show max 5 pages)
+    const startPage = Math.max(1, pag.page - 2);
+    const endPage = Math.min(totalPages, startPage + 4);
+
+    for (let i = startPage; i <= endPage; i++) {
+        const pageBtn = document.createElement('button');
+        pageBtn.className = 'pagination-btn' + (i === pag.page ? ' active' : '');
+        pageBtn.textContent = i;
+        pageBtn.onclick = () => goToPage(tableType, i);
+        controls.appendChild(pageBtn);
+    }
+
+    // Next button
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'pagination-btn';
+    nextBtn.textContent = '›';
+    nextBtn.disabled = pag.page === totalPages;
+    nextBtn.onclick = () => goToPage(tableType, pag.page + 1);
+    controls.appendChild(nextBtn);
+}
+
+// Get paginated slice of data
+function getPaginatedData(data, tableType) {
+    const pag = tablePagination[tableType];
+    const start = (pag.page - 1) * pag.pageSize;
+    const end = start + pag.pageSize;
+    return data.slice(start, end);
+}
+
+// =============================================================================
+// TABLE UPDATE FUNCTIONS
+// =============================================================================
+
+// Update drones table
+function updateDronesTable(data) {
+    const tbody = document.getElementById('drones-table');
     tbody.innerHTML = '';
 
-    if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #aaa;">No data available</td></tr>';
+    // Sort and paginate
+    const sorted = sortTableData(data, 'drones');
+    updatePaginationControls('drones', sorted.length);
+    const pageData = getPaginatedData(sorted, 'drones');
+
+    // Update tab count
+    document.getElementById('tab-drone-count').textContent = sorted.length;
+
+    if (pageData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #aaa;">No drone data</td></tr>';
         return;
     }
 
-    data.slice(0, 100).forEach(track => {
+    pageData.forEach(track => {
         const row = document.createElement('tr');
         row.className = 'track-row';
 
@@ -1497,7 +1699,6 @@ function updateTable(data) {
         if (patternData.anomalies.some(a => a.drone_id === track.drone_id)) {
             row.classList.add('anomaly');
         }
-        // Check for multi-kit detection
         const multiKitCheck = patternData.multiKit.find(m => m.drone_id === track.drone_id);
         if (multiKitCheck && Array.isArray(multiKitCheck.kits) && multiKitCheck.kits.length > 1) {
             row.classList.add('multi-kit');
@@ -1541,7 +1742,6 @@ function updateTable(data) {
             <td>${formatTime(track.time)}</td>
             <td ${kitTooltip ? `title="${kitTooltip}"` : ''}>${kitDisplay}</td>
             <td>${track.drone_id}</td>
-            <td>${track.track_type || 'drone'}</td>
             <td>${track.rid_make || 'N/A'}</td>
             <td>${track.rid_model || 'N/A'}</td>
             <td>${formatCoord(track.lat)}</td>
@@ -1551,6 +1751,145 @@ function updateTable(data) {
         `;
         tbody.appendChild(row);
     });
+
+    updateSortIndicators('drones');
+}
+
+// Update aircraft table
+function updateAircraftTable(data) {
+    const tbody = document.getElementById('aircraft-table');
+    tbody.innerHTML = '';
+
+    // Sort and paginate
+    const sorted = sortTableData(data, 'aircraft');
+    updatePaginationControls('aircraft', sorted.length);
+    const pageData = getPaginatedData(sorted, 'aircraft');
+
+    // Update tab count
+    document.getElementById('tab-aircraft-count').textContent = sorted.length;
+
+    if (pageData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #aaa;">No aircraft data</td></tr>';
+        return;
+    }
+
+    pageData.forEach(track => {
+        const row = document.createElement('tr');
+        row.className = 'track-row';
+
+        row.onclick = () => {
+            if (track.lat != null && track.lon != null) {
+                map.setView([track.lat, track.lon], 15);
+                markers.forEach(marker => {
+                    const pos = marker.getLatLng();
+                    if (pos.lat === track.lat && pos.lng === track.lon) {
+                        marker.openPopup();
+                    }
+                });
+            }
+        };
+
+        const kitName = getKitName(track.kit_id);
+        let kitDisplay = kitName !== track.kit_id ? kitName : track.kit_id;
+        let kitTooltip = kitName !== track.kit_id ? `ID: ${track.kit_id}` : '';
+
+        row.innerHTML = `
+            <td>${formatTime(track.time)}</td>
+            <td ${kitTooltip ? `title="${kitTooltip}"` : ''}>${kitDisplay}</td>
+            <td>${track.drone_id}</td>
+            <td>${track.callsign || track.flight || 'N/A'}</td>
+            <td>${formatCoord(track.lat)}</td>
+            <td>${formatCoord(track.lon)}</td>
+            <td>${track.alt != null ? track.alt.toFixed(1) : 'N/A'}</td>
+            <td>${track.speed != null ? track.speed.toFixed(1) : 'N/A'}</td>
+            <td>${track.heading != null ? track.heading.toFixed(0) + '°' : 'N/A'}</td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    updateSortIndicators('aircraft');
+}
+
+// Update signals table
+function updateSignalsTable(data) {
+    const tbody = document.getElementById('signals-table');
+    tbody.innerHTML = '';
+
+    // Sort and paginate
+    const sorted = sortTableData(data, 'signals');
+    updatePaginationControls('signals', sorted.length);
+    const pageData = getPaginatedData(sorted, 'signals');
+
+    // Update tab count
+    document.getElementById('tab-signal-count').textContent = sorted.length;
+
+    if (pageData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #aaa;">No signal data</td></tr>';
+        return;
+    }
+
+    pageData.forEach(signal => {
+        const row = document.createElement('tr');
+        row.className = 'track-row';
+
+        // Click to zoom to signal location (if valid)
+        const hasValidCoords = signal.lat && signal.lon &&
+            Math.abs(signal.lat) > 0.001 && Math.abs(signal.lon) > 0.001;
+
+        if (hasValidCoords) {
+            row.onclick = () => {
+                map.setView([signal.lat, signal.lon], 15);
+                signalMarkers.forEach(marker => {
+                    const pos = marker.getLatLng();
+                    if (Math.abs(pos.lat - signal.lat) < 0.0001 && Math.abs(pos.lng - signal.lon) < 0.0001) {
+                        marker.openPopup();
+                    }
+                });
+            };
+        } else {
+            row.style.opacity = '0.6';
+            row.title = 'No GPS location available';
+        }
+
+        const kitName = getKitName(signal.kit_id);
+        let kitDisplay = kitName !== signal.kit_id ? kitName : signal.kit_id;
+
+        // Format detection type nicely
+        const detType = signal.detection_type || signal.signal_type || 'analog';
+        const detDisplay = detType === 'dji_digital' ? 'DJI Digital' :
+                          detType.charAt(0).toUpperCase() + detType.slice(1);
+
+        row.innerHTML = `
+            <td>${formatTime(signal.time)}</td>
+            <td>${kitDisplay}</td>
+            <td>${signal.freq_mhz ? signal.freq_mhz.toFixed(1) : 'N/A'}</td>
+            <td>${signal.power_dbm ? signal.power_dbm.toFixed(1) : 'N/A'}</td>
+            <td>${signal.pal_conf != null ? (signal.pal_conf * 100).toFixed(0) : 'N/A'}</td>
+            <td>${signal.ntsc_conf != null ? (signal.ntsc_conf * 100).toFixed(0) : 'N/A'}</td>
+            <td>${detDisplay}</td>
+            <td>${hasValidCoords ? formatCoord(signal.lat) : 'N/A'}</td>
+            <td>${hasValidCoords ? formatCoord(signal.lon) : 'N/A'}</td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    updateSortIndicators('signals');
+}
+
+// Legacy updateTable function for backwards compatibility
+function updateTable(data) {
+    // Filter to drones only and update the drones table
+    const drones = data.filter(d => d.track_type === 'drone' || !d.track_type);
+    const aircraft = data.filter(d => d.track_type === 'aircraft');
+
+    // Update both tables with their respective data
+    updateDronesTable(drones);
+    updateAircraftTable(aircraft);
+
+    // Update signals table if we have signal data
+    if (currentSignals.length > 0) {
+        updateSignalsTable(currentSignals);
+    }
 }
 
 // Update stats - accepts optional API response with pre-computed counts
@@ -1566,11 +1905,16 @@ function updateStats(data, apiResponse = null) {
     const uniqueDroneOnlyIds = new Set(drones.map(d => d.drone_id));
     const uniqueAircraftIds = new Set(aircraft.map(d => d.drone_id));
 
-    // total-tracks shows total unique targets (drones + aircraft)
     document.getElementById('total-tracks').textContent = uniqueDroneIds.size;
     document.getElementById('total-drones').textContent = uniqueDroneOnlyIds.size;
     document.getElementById('total-aircraft').textContent = uniqueAircraftIds.size;
     document.getElementById('active-kits').textContent = uniqueKits.size;
+
+    // Also update tab badge counts for quick reference
+    const tabDroneCount = document.getElementById('tab-drone-count');
+    const tabAircraftCount = document.getElementById('tab-aircraft-count');
+    if (tabDroneCount) tabDroneCount.textContent = drones.length;
+    if (tabAircraftCount) tabAircraftCount.textContent = aircraft.length;
 }
 
 // Update threat summary cards
@@ -1984,6 +2328,139 @@ function updateKitMarkers() {
     });
 }
 
+// Fetch FPV signals from API
+async function fetchSignals() {
+    try {
+        const timeRange = document.getElementById('time-range')?.value || '1h';
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        const response = await fetch(`/api/signals?time_range=${timeRange}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        currentSignals = data.signals || [];
+        updateSignalCount();
+        updateSignalMarkers();
+        // Update the signals table if it exists
+        if (typeof updateSignalsTable === 'function') {
+            updateSignalsTable(currentSignals);
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.warn('Signal fetch timed out');
+        } else {
+            console.error('Failed to fetch signals:', error);
+        }
+    }
+}
+
+// Update signal count in stats
+function updateSignalCount() {
+    document.getElementById('total-signals').textContent = currentSignals.length;
+    // Also update tab count if it exists
+    const tabCount = document.getElementById('tab-signal-count');
+    if (tabCount) tabCount.textContent = currentSignals.length;
+}
+
+// Update signal markers on the map
+function updateSignalMarkers() {
+    // Clear existing signal markers
+    signalMarkers.forEach(m => map.removeLayer(m));
+    signalMarkers = [];
+
+    if (!map || !showSignals) return;
+
+    currentSignals.forEach(signal => {
+        // Only add markers for signals with valid lat/lon
+        if (signal.lat == null || signal.lon == null || isNaN(signal.lat) || isNaN(signal.lon)) return;
+        if (signal.lat === 0 && signal.lon === 0) return;  // Skip default 0,0 locations
+
+        const color = getKitColor(signal.kit_id);
+        const isAnalog = signal.detection_type === 'analog';
+        const typeLabel = isAnalog ? 'Analog FPV' : 'DJI Digital';
+        const typeIcon = isAnalog ? '📡' : '📶';
+
+        // Create a custom icon for signal marker (distinct S icon)
+        const icon = L.divIcon({
+            className: 'signal-marker',
+            html: `<div style="
+                width: 20px;
+                height: 20px;
+                background: ${isAnalog ? '#ff6600' : '#9933ff'};
+                border: 2px solid #000;
+                border-radius: 4px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+                font-weight: bold;
+                color: white;
+                text-shadow: 1px 1px 1px #000;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            ">S</div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+        });
+
+        const marker = L.marker([signal.lat, signal.lon], { icon });
+
+        // Format power with color coding
+        const formatPower = (dbm) => {
+            if (dbm == null) return '<span style="color:#666">--</span>';
+            const color = dbm >= -50 ? '#00cc00' : dbm >= -70 ? '#ffaa00' : '#ff4444';
+            return `<span style="color:${color}">${dbm.toFixed(1)} dBm</span>`;
+        };
+
+        // Format confidence scores
+        const formatConf = (val) => {
+            if (val == null) return '--';
+            return `${(val * 100).toFixed(0)}%`;
+        };
+
+        // Determine video standard
+        let videoStandard = '--';
+        if (signal.pal_conf != null && signal.ntsc_conf != null) {
+            if (signal.pal_conf > signal.ntsc_conf && signal.pal_conf > 0.5) {
+                videoStandard = `PAL (${formatConf(signal.pal_conf)})`;
+            } else if (signal.ntsc_conf > signal.pal_conf && signal.ntsc_conf > 0.5) {
+                videoStandard = `NTSC (${formatConf(signal.ntsc_conf)})`;
+            } else {
+                videoStandard = `PAL: ${formatConf(signal.pal_conf)} / NTSC: ${formatConf(signal.ntsc_conf)}`;
+            }
+        }
+
+        const popupContent = `
+            <div class="signal-popup" style="min-width: 200px;">
+                <h3 style="margin: 0 0 8px 0; color: ${isAnalog ? '#ff6600' : '#9933ff'};">${typeIcon} ${typeLabel}</h3>
+                <div style="font-size: 12px; line-height: 1.6;">
+                    <div><strong>Frequency:</strong> ${signal.freq_mhz?.toFixed(1) || '--'} MHz</div>
+                    <div><strong>Power:</strong> ${formatPower(signal.power_dbm)}</div>
+                    ${signal.bandwidth_mhz ? `<div><strong>Bandwidth:</strong> ${signal.bandwidth_mhz.toFixed(1)} MHz</div>` : ''}
+                    ${isAnalog ? `<div><strong>Video:</strong> ${videoStandard}</div>` : ''}
+                    <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
+                    <div><strong>Kit:</strong> ${getKitName(signal.kit_id)}</div>
+                    <div><strong>Source:</strong> ${signal.source || '--'}</div>
+                    <div><strong>Location:</strong> ${signal.lat.toFixed(5)}, ${signal.lon.toFixed(5)}</div>
+                    ${signal.alt ? `<div><strong>Altitude:</strong> ${signal.alt.toFixed(1)}m</div>` : ''}
+                    <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
+                    <div style="color:#888; font-size:11px;">Detected: ${new Date(signal.time).toLocaleString()}</div>
+                </div>
+            </div>
+        `;
+
+        marker.bindPopup(popupContent);
+        marker.bindTooltip(`${signal.freq_mhz?.toFixed(0) || '?'} MHz ${typeLabel}`, { permanent: false, direction: 'top' });
+
+        marker.addTo(map);
+        signalMarkers.push(marker);
+    });
+}
+
 // Center map on a specific kit
 function centerOnKit(kitId) {
     const kit = kits.find(k => k.kit_id === kitId);
@@ -2328,6 +2805,13 @@ async function fetchData() {
             await fetchPatterns();
         } catch (patternError) {
             console.warn('Pattern fetch failed:', patternError.message);
+        }
+
+        // Fetch FPV signal data (don't fail if this errors)
+        try {
+            await fetchSignals();
+        } catch (signalError) {
+            console.warn('Signal fetch failed:', signalError.message);
         }
 
         // Apply active filters

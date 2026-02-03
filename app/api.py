@@ -1084,7 +1084,8 @@ async def query_signals(
         query = """
             SELECT
                 time, kit_id, freq_mhz, power_dbm, bandwidth_mhz,
-                lat, lon, alt, detection_type
+                lat, lon, alt, detection_type,
+                pal_conf, ntsc_conf, source, signal_type
             FROM signals
             WHERE time >= $1 AND time <= $2
         """

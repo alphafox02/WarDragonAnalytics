@@ -117,12 +117,19 @@ Kits added via the Web UI are stored in the database and persist across restarts
 
 ### Web UI (Port 8090)
 
-- Interactive Leaflet map with drone tracks
+- Interactive Leaflet map with drone, aircraft, and signal markers
 - Drone, pilot, and home location markers (when provided by DroneID/Remote ID)
+- FPV signal detection markers (5.8GHz analog, DJI digital)
 - Track history trails
 - Real-time updates (5-second refresh)
+- **Tabbed data table** with separate views for Drones, Aircraft, and Signals
+  - Sortable columns for each data type
+  - Pagination (25/50/100 per page) for large datasets
+  - Click any row to zoom to location on map
 - Kit management interface
-- CSV export (untested)
+- Quick filters for anomalies, repeated contacts, multi-kit detections
+- Light and dark theme support
+- CSV export
 - AI Assistant for natural language queries (optional, requires Ollama)
 
 ### Enterprise Features (Optional)
