@@ -823,3 +823,185 @@ class TestEdgeCases:
 
         assert response.status_code == 200
         assert response.json()["count"] == 0
+
+
+class TestSignalLocationEstimation:
+    """Tests for the signal RSSI-based location estimation endpoint."""
+
+    def test_estimate_signal_location_basic(self, client_with_mocked_db, mock_asyncpg_connection, mock_asyncpg_row):
+        """
+        Test signal location estimation with multiple kits.
+
+        Verifies that:
+        - Returns 200 status code
+        - Returns estimated location
+        - Includes kit observations
+        """
+        # Mock signal observations
+        signal_data = [
+            {
+                "kit_id": "kit-alpha",
+                "power_dbm": -45.0,
+                "freq_mhz": 5800.0,
+                "time": datetime.now(timezone.utc),
+                "signal_lat": None,
+                "signal_lon": None,
+                "pal_conf": 0.85,
+                "ntsc_conf": 0.12
+            },
+            {
+                "kit_id": "kit-bravo",
+                "power_dbm": -52.0,
+                "freq_mhz": 5800.0,
+                "time": datetime.now(timezone.utc),
+                "signal_lat": None,
+                "signal_lon": None,
+                "pal_conf": 0.78,
+                "ntsc_conf": 0.15
+            }
+        ]
+
+        # Mock kit positions
+        kit_positions = [
+            {"lat": 37.7740, "lon": -122.4180, "alt": 10.0, "time": datetime.now(timezone.utc)},
+            {"lat": 37.7760, "lon": -122.4210, "alt": 12.0, "time": datetime.now(timezone.utc)}
+        ]
+
+        call_count = [0]
+
+        def mock_fetch(*args, **kwargs):
+            return [mock_asyncpg_row(d) for d in signal_data]
+
+        def mock_fetchrow(*args, **kwargs):
+            pos = kit_positions[call_count[0] % len(kit_positions)]
+            call_count[0] += 1
+            return mock_asyncpg_row(pos)
+
+        mock_asyncpg_connection.fetch.side_effect = mock_fetch
+        mock_asyncpg_connection.fetchrow.side_effect = mock_fetchrow
+
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "estimated" in data
+        assert "lat" in data["estimated"]
+        assert "lon" in data["estimated"]
+        assert data["freq_mhz"] == 5800.0
+        assert data["kit_count"] >= 1
+        assert "observations" in data
+        assert data["algorithm"] in ["single_kit", "two_kit_weighted", "trilateration"]
+
+    def test_estimate_signal_location_no_signals(self, client_with_mocked_db, mock_asyncpg_connection):
+        """
+        Test signal location estimation when no signals found.
+
+        Verifies that:
+        - Returns 404 when no signals match frequency
+        """
+        mock_asyncpg_connection.fetch.return_value = []
+
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0"
+        )
+
+        assert response.status_code == 404
+        assert "No signal observations" in response.json()["detail"]
+
+    def test_estimate_signal_location_missing_freq(self, client_with_mocked_db):
+        """
+        Test signal location estimation with missing frequency parameter.
+
+        Verifies that:
+        - Returns 422 when freq_mhz is missing
+        """
+        response = client_with_mocked_db.get("/api/analysis/estimate-signal-location")
+
+        assert response.status_code == 422
+
+    def test_estimate_signal_location_custom_time_window(self, client_with_mocked_db, mock_asyncpg_connection):
+        """
+        Test signal location estimation with custom time window.
+
+        Verifies that:
+        - Custom time window parameter is accepted
+        """
+        mock_asyncpg_connection.fetch.return_value = []
+
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0&time_window_seconds=30"
+        )
+
+        # Will return 404 (no signals) but validates parameter
+        assert response.status_code == 404
+
+    def test_estimate_signal_location_invalid_time_window(self, client_with_mocked_db):
+        """
+        Test signal location estimation with invalid time window.
+
+        Verifies that:
+        - Returns 422 for out-of-range time window
+        """
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0&time_window_seconds=500"
+        )
+
+        assert response.status_code == 422
+
+    def test_estimate_signal_location_triangulation_possible(self, client_with_mocked_db, mock_asyncpg_connection, mock_asyncpg_row):
+        """
+        Test signal location estimation with 3+ kits (triangulation possible).
+
+        Verifies that:
+        - triangulation_possible is True when 3+ kits
+        """
+        signal_data = [
+            {"kit_id": f"kit-{i}", "power_dbm": -45.0 - i*5, "freq_mhz": 5800.0,
+             "time": datetime.now(timezone.utc), "signal_lat": None, "signal_lon": None,
+             "pal_conf": 0.8, "ntsc_conf": 0.1}
+            for i in range(3)
+        ]
+
+        kit_positions = [
+            {"lat": 37.7740 + i*0.001, "lon": -122.4180 - i*0.001, "alt": 10.0, "time": datetime.now(timezone.utc)}
+            for i in range(3)
+        ]
+
+        call_count = [0]
+
+        def mock_fetch(*args, **kwargs):
+            return [mock_asyncpg_row(d) for d in signal_data]
+
+        def mock_fetchrow(*args, **kwargs):
+            pos = kit_positions[call_count[0] % len(kit_positions)]
+            call_count[0] += 1
+            return mock_asyncpg_row(pos)
+
+        mock_asyncpg_connection.fetch.side_effect = mock_fetch
+        mock_asyncpg_connection.fetchrow.side_effect = mock_fetchrow
+
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["kit_count"] == 3
+        assert data["triangulation_possible"] is True
+
+    def test_estimate_signal_location_database_error(self, client_with_mocked_db, mock_asyncpg_connection):
+        """
+        Test error handling when database query fails.
+
+        Verifies that:
+        - Returns 500 status on database error
+        """
+        mock_asyncpg_connection.fetch.side_effect = Exception("Database error")
+
+        response = client_with_mocked_db.get(
+            "/api/analysis/estimate-signal-location?freq_mhz=5800.0"
+        )
+
+        assert response.status_code == 500

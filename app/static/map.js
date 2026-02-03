@@ -1235,6 +1235,183 @@ async function estimateLocation(droneId, timestamp) {
     }
 }
 
+// Request signal location estimation from API (triangulation by frequency)
+async function estimateSignalLocation(freqMhz, timestamp) {
+    // Clear any existing estimation
+    clearEstimation();
+
+    // Update button to loading state
+    const btn = document.querySelector('.signal-estimate-btn');
+    if (btn) {
+        btn.classList.add('loading');
+        btn.textContent = 'Estimating...';
+        btn.disabled = true;
+        btn.style.background = '#999';
+    }
+
+    try {
+        let url = `/api/analysis/estimate-signal-location?freq_mhz=${encodeURIComponent(freqMhz)}`;
+        if (timestamp) {
+            url += `&timestamp=${encodeURIComponent(timestamp)}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Estimation failed');
+        }
+
+        const result = await response.json();
+        displaySignalEstimation(result);
+        activeEstimation = `signal-${freqMhz}`;
+
+        // Update button state
+        if (btn) {
+            btn.classList.remove('loading');
+            btn.classList.add('active');
+            btn.textContent = 'Hide Estimation';
+            btn.disabled = false;
+            btn.style.background = '#00aa00';
+            btn.onclick = () => clearEstimation();
+        }
+
+        console.log(`Estimated location for signal ${freqMhz} MHz:`, result);
+    } catch (error) {
+        console.error('Signal estimation error:', error);
+        alert('Signal location estimation failed: ' + error.message);
+
+        // Reset button
+        if (btn) {
+            btn.classList.remove('loading');
+            btn.textContent = 'Estimate Location';
+            btn.disabled = false;
+            btn.style.background = '#ff6600';
+        }
+    }
+}
+
+// Display signal estimation result on map
+function displaySignalEstimation(result) {
+    const estimated = result.estimated;
+    const confidence = result.confidence_radius_m;
+    const kitCount = result.kit_count;
+    const freqMhz = result.freq_mhz;
+    const warning = result.warning;
+
+    // Create estimated location marker (dashed orange circle for signals)
+    const estimateIcon = L.divIcon({
+        className: 'signal-estimate-marker',
+        html: `<div style="
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 102, 0, 0.3);
+            border: 3px dashed #ff6600;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(255, 102, 0, 0.5);
+        "></div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+    });
+
+    estimationMarker = L.marker([estimated.lat, estimated.lon], { icon: estimateIcon })
+        .bindPopup(`
+            <div class="popup-title" style="color: #ff6600;">Estimated Signal Source</div>
+            <div class="popup-row">
+                <span class="popup-label">Frequency:</span>
+                <span class="popup-value">${freqMhz.toFixed(1)} MHz</span>
+            </div>
+            <div class="popup-row">
+                <span class="popup-label">Position:</span>
+                <span class="popup-value">${estimated.lat.toFixed(6)}, ${estimated.lon.toFixed(6)}</span>
+            </div>
+            <div class="popup-row">
+                <span class="popup-label">Confidence:</span>
+                <span class="popup-value">${confidence.toFixed(0)}m radius</span>
+            </div>
+            <div class="popup-row">
+                <span class="popup-label">Kits:</span>
+                <span class="popup-value">${kitCount} ${result.triangulation_possible ? '(triangulation)' : ''}</span>
+            </div>
+            ${warning ? `<div class="popup-row" style="color: #ffaa00;"><span class="popup-label">Warning:</span><span class="popup-value">${warning}</span></div>` : ''}
+        `)
+        .addTo(map);
+
+    // Create confidence radius circle (orange for signals)
+    estimationCircle = L.circle([estimated.lat, estimated.lon], {
+        radius: confidence,
+        color: '#ff6600',
+        fillColor: '#ff6600',
+        fillOpacity: 0.1,
+        weight: 2,
+        dashArray: '5, 5'
+    }).addTo(map);
+
+    // Show info overlay
+    showSignalEstimationOverlay(result);
+
+    // Zoom to show the estimation
+    const bounds = L.latLngBounds([
+        [estimated.lat, estimated.lon]
+    ]);
+    // Pad bounds to show confidence radius
+    map.fitBounds(bounds.pad(0.5));
+}
+
+// Show signal estimation info overlay
+function showSignalEstimationOverlay(result) {
+    // Remove existing overlay
+    if (estimationOverlay) {
+        estimationOverlay.remove();
+    }
+
+    const kitCount = result.kit_count;
+    const triangulation = result.triangulation_possible;
+    const confidence = result.confidence_radius_m;
+
+    let accuracyClass = 'error-good';
+    if (confidence > 500) accuracyClass = 'error-bad';
+    else if (confidence > 300) accuracyClass = 'error-poor';
+    else if (confidence > 150) accuracyClass = 'error-fair';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'estimation-overlay';
+    overlay.className = 'estimation-overlay';
+    overlay.innerHTML = `
+        <div class="estimation-header" style="border-left-color: #ff6600;">
+            <span class="estimation-icon">📡</span>
+            Signal Location Estimate
+            <button class="estimation-close" onclick="clearEstimation()">&times;</button>
+        </div>
+        <div class="estimation-body">
+            <div class="estimation-row">
+                <span class="estimation-label">Frequency:</span>
+                <span class="estimation-value">${result.freq_mhz.toFixed(1)} MHz</span>
+            </div>
+            <div class="estimation-row">
+                <span class="estimation-label">Algorithm:</span>
+                <span class="estimation-value">${result.algorithm.replace(/_/g, ' ')}</span>
+            </div>
+            <div class="estimation-row">
+                <span class="estimation-label">Kits Used:</span>
+                <span class="estimation-value">${kitCount} ${triangulation ? '✓' : ''}</span>
+            </div>
+            <div class="estimation-row">
+                <span class="estimation-label">Confidence:</span>
+                <span class="estimation-value ${accuracyClass}">${confidence.toFixed(0)}m</span>
+            </div>
+            ${result.warning ? `
+            <div class="estimation-row">
+                <span class="estimation-label" style="color: #ffaa00;">Warning:</span>
+                <span class="estimation-value" style="color: #ffaa00;">${result.warning}</span>
+            </div>
+            ` : ''}
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    estimationOverlay = overlay;
+}
+
 // Display estimation result on map
 function displayEstimation(result) {
     const estimated = result.estimated;
@@ -1863,9 +2040,9 @@ function updateSignalsTable(data) {
             <td>${formatTime(signal.time)}</td>
             <td>${kitDisplay}</td>
             <td>${signal.freq_mhz ? signal.freq_mhz.toFixed(1) : 'N/A'}</td>
-            <td>${signal.power_dbm ? signal.power_dbm.toFixed(1) : 'N/A'}</td>
-            <td>${signal.pal_conf != null ? (signal.pal_conf * 100).toFixed(0) : 'N/A'}</td>
-            <td>${signal.ntsc_conf != null ? (signal.ntsc_conf * 100).toFixed(0) : 'N/A'}</td>
+            <td>${signal.power_dbm != null ? signal.power_dbm.toFixed(3) : 'N/A'}</td>
+            <td>${signal.pal_conf != null ? (signal.pal_conf > 1 ? signal.pal_conf : signal.pal_conf * 100).toFixed(0) : 'N/A'}</td>
+            <td>${signal.ntsc_conf != null ? (signal.ntsc_conf > 1 ? signal.ntsc_conf : signal.ntsc_conf * 100).toFixed(0) : 'N/A'}</td>
             <td>${detDisplay}</td>
             <td>${hasValidCoords ? formatCoord(signal.lat) : 'N/A'}</td>
             <td>${hasValidCoords ? formatCoord(signal.lon) : 'N/A'}</td>
@@ -2409,37 +2586,52 @@ function updateSignalMarkers() {
 
         const marker = L.marker([signal.lat, signal.lon], { icon });
 
-        // Format power with color coding
-        const formatPower = (dbm) => {
-            if (dbm == null) return '<span style="color:#666">--</span>';
-            const color = dbm >= -50 ? '#00cc00' : dbm >= -70 ? '#ffaa00' : '#ff4444';
-            return `<span style="color:${color}">${dbm.toFixed(1)} dBm</span>`;
+        // Format signal strength - linear power (0-1 scale, not dBm)
+        const formatSignalStrength = (power) => {
+            if (power == null) return '<span style="color:#666">--</span>';
+            // Linear power: higher is stronger (typically 0.0 to 1.0+)
+            const color = power >= 0.7 ? '#00cc00' : power >= 0.3 ? '#ffaa00' : '#ff4444';
+            return `<span style="color:${color}">${power.toFixed(3)}</span>`;
         };
 
-        // Format confidence scores
+        // Normalize confidence value - handles both 0-1 (decimal) and 0-100 (percentage) inputs
+        const normalizeConf = (val) => {
+            if (val == null) return null;
+            // If value > 1, assume it's already 0-100 percentage
+            return val > 1 ? val : val * 100;
+        };
+
+        // Format confidence scores for display
         const formatConf = (val) => {
             if (val == null) return '--';
-            return `${(val * 100).toFixed(0)}%`;
+            const normalized = normalizeConf(val);
+            return `${normalized.toFixed(0)}%`;
         };
 
         // Determine video standard
         let videoStandard = '--';
         if (signal.pal_conf != null && signal.ntsc_conf != null) {
-            if (signal.pal_conf > signal.ntsc_conf && signal.pal_conf > 0.5) {
-                videoStandard = `PAL (${formatConf(signal.pal_conf)})`;
-            } else if (signal.ntsc_conf > signal.pal_conf && signal.ntsc_conf > 0.5) {
-                videoStandard = `NTSC (${formatConf(signal.ntsc_conf)})`;
+            const palNorm = normalizeConf(signal.pal_conf);
+            const ntscNorm = normalizeConf(signal.ntsc_conf);
+            if (palNorm > ntscNorm && palNorm > 50) {
+                videoStandard = `PAL (${palNorm.toFixed(0)}%)`;
+            } else if (ntscNorm > palNorm && ntscNorm > 50) {
+                videoStandard = `NTSC (${ntscNorm.toFixed(0)}%)`;
             } else {
                 videoStandard = `PAL: ${formatConf(signal.pal_conf)} / NTSC: ${formatConf(signal.ntsc_conf)}`;
             }
         }
+
+        // Escape values for use in onclick handler
+        const escapedFreqMhz = signal.freq_mhz?.toFixed(1) || '0';
+        const escapedTimestamp = signal.time ? signal.time.replace(/'/g, "\\'") : '';
 
         const popupContent = `
             <div class="signal-popup" style="min-width: 200px;">
                 <h3 style="margin: 0 0 8px 0; color: ${isAnalog ? '#ff6600' : '#9933ff'};">${typeIcon} ${typeLabel}</h3>
                 <div style="font-size: 12px; line-height: 1.6;">
                     <div><strong>Frequency:</strong> ${signal.freq_mhz?.toFixed(1) || '--'} MHz</div>
-                    <div><strong>Power:</strong> ${formatPower(signal.power_dbm)}</div>
+                    <div><strong>Signal:</strong> ${formatSignalStrength(signal.power_dbm)}</div>
                     ${signal.bandwidth_mhz ? `<div><strong>Bandwidth:</strong> ${signal.bandwidth_mhz.toFixed(1)} MHz</div>` : ''}
                     ${isAnalog ? `<div><strong>Video:</strong> ${videoStandard}</div>` : ''}
                     <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
@@ -2449,6 +2641,9 @@ function updateSignalMarkers() {
                     ${signal.alt ? `<div><strong>Altitude:</strong> ${signal.alt.toFixed(1)}m</div>` : ''}
                     <hr style="margin: 6px 0; border: none; border-top: 1px solid #444;">
                     <div style="color:#888; font-size:11px;">Detected: ${new Date(signal.time).toLocaleString()}</div>
+                    <button class="popup-btn signal-estimate-btn" data-freq="${escapedFreqMhz}" data-timestamp="${escapedTimestamp}" onclick="estimateSignalLocation(${escapedFreqMhz}, '${escapedTimestamp}')" style="margin-top: 8px; width: 100%; padding: 6px; background: #ff6600; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Estimate Location
+                    </button>
                 </div>
             </div>
         `;

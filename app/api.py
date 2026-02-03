@@ -209,6 +209,20 @@ class LocationEstimate(BaseModel):
     spoofing_reason: Optional[str] = None  # Explanation if suspected
 
 
+class SignalLocationEstimate(BaseModel):
+    """Model for signal RSSI-based location estimation response."""
+    freq_mhz: float
+    timestamp: datetime
+    estimated: dict  # {"lat": float, "lon": float}
+    confidence_radius_m: float  # Estimated accuracy radius
+    observations: List[dict]  # Kit observations used
+    algorithm: str  # "single_kit", "two_kit_weighted", or "trilateration"
+    estimated_distances: Optional[List[dict]] = None  # [{"kit_id": str, "distance_m": float}, ...]
+    kit_count: int  # Number of kits that saw this signal
+    triangulation_possible: bool  # True if 3+ kits (geometric triangulation)
+    warning: Optional[str] = None  # e.g., "Kits are geographically distant"
+
+
 # Kit Management Models
 class KitCreate(BaseModel):
     """Model for creating a new kit"""
@@ -2053,6 +2067,103 @@ def _trilaterate_3plus_kits(observations: List[dict]) -> dict:
     }
 
 
+def estimate_location_from_linear_power(observations: List[dict]) -> dict:
+    """
+    Estimate signal source location using linear power weighting.
+
+    This algorithm is for FPV signals where we have linear power (0-1 scale)
+    rather than calibrated RSSI in dBm. It uses a simpler weighted centroid
+    approach where higher power = closer to that kit.
+
+    Unlike the RSSI algorithm used for drones, this doesn't attempt to
+    calculate distances - it just weights kit positions by signal strength.
+
+    Args:
+        observations: List of dicts with keys: kit_lat, kit_lon, rssi (linear power 0-1)
+
+    Returns:
+        dict with estimated lat/lon and confidence info
+    """
+    if not observations:
+        return None
+
+    # Filter valid observations with kit positions
+    valid_obs = [o for o in observations if o.get('kit_lat') and o.get('kit_lon')]
+
+    if not valid_obs:
+        return None
+
+    if len(valid_obs) == 1:
+        # Single kit - position is at the kit with large uncertainty
+        obs = valid_obs[0]
+        power = obs.get('rssi', 0.5)
+        # Higher power = likely closer, so smaller radius
+        # Linear power ~0.1 = far (1000m), ~1.0 = close (100m)
+        radius = max(100, min(2000, 500 / (power + 0.1)))
+        return {
+            "lat": obs['kit_lat'],
+            "lon": obs['kit_lon'],
+            "confidence_radius_m": round(radius),
+            "method": "single_kit_linear",
+            "estimated_distances": None  # Can't estimate distance from linear power
+        }
+
+    # For 2+ kits: weighted centroid based on linear power
+    # Higher power = signal is closer to that kit = higher weight
+
+    # Get kit separation for confidence calculation
+    max_separation = 0
+    for i, obs1 in enumerate(valid_obs):
+        for obs2 in valid_obs[i+1:]:
+            sep = calculate_distance_meters(
+                obs1['kit_lat'], obs1['kit_lon'],
+                obs2['kit_lat'], obs2['kit_lon']
+            )
+            max_separation = max(max_separation, sep)
+
+    # Calculate weighted centroid
+    # Use power directly as weight (higher power = closer = higher weight)
+    weights = []
+    for obs in valid_obs:
+        power = obs.get('rssi', 0.5)
+        # Ensure positive weight, amplify differences
+        weight = max(0.01, power) ** 2  # Square to amplify signal strength differences
+        weights.append(weight)
+
+    total_weight = sum(weights)
+    if total_weight == 0:
+        total_weight = 1
+
+    est_lat = sum(obs['kit_lat'] * w for obs, w in zip(valid_obs, weights)) / total_weight
+    est_lon = sum(obs['kit_lon'] * w for obs, w in zip(valid_obs, weights)) / total_weight
+
+    # Confidence radius based on:
+    # - Number of kits (more = better)
+    # - Kit separation (too far apart = less reliable)
+    # - Signal strength variance (similar = more confident)
+    base_radius = 300  # Base uncertainty in meters
+
+    # More kits = more confidence
+    kit_factor = 1.0 / len(valid_obs)  # 2 kits = 0.5, 3 kits = 0.33
+
+    # Large kit separation = less confidence (signal may be between them)
+    separation_factor = min(2.0, max_separation / 1000) if max_separation > 0 else 1.0
+
+    confidence_radius = base_radius * kit_factor * (1 + separation_factor)
+    confidence_radius = max(100, min(2000, confidence_radius))
+
+    method = "linear_power_weighted" if len(valid_obs) == 2 else "linear_power_multikit"
+
+    return {
+        "lat": est_lat,
+        "lon": est_lon,
+        "confidence_radius_m": round(confidence_radius, 1),
+        "method": method,
+        "estimated_distances": None,  # Can't reliably estimate distance from linear power
+        "kit_separation_m": round(max_separation) if max_separation > 0 else None
+    }
+
+
 @app.get("/api/analysis/estimate-location/{drone_id}", response_model=LocationEstimate)
 async def estimate_drone_location(
     drone_id: str,
@@ -2245,6 +2356,183 @@ async def estimate_drone_location(
         raise
     except Exception as e:
         logger.error(f"Failed to estimate drone location: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analysis/estimate-signal-location", response_model=SignalLocationEstimate)
+async def estimate_signal_location(
+    freq_mhz: float = Query(..., description="Signal frequency in MHz (e.g., 5800.0)"),
+    timestamp: Optional[str] = Query(None, description="ISO timestamp for the observation (default: latest)"),
+    time_window_seconds: int = Query(60, description="Time window around timestamp", ge=5, le=300)
+):
+    """
+    Estimate signal source location using RSSI-based triangulation from multiple kits.
+
+    This endpoint finds all kits that detected a signal on the specified frequency
+    within the time window, then uses RSSI-weighted triangulation to estimate
+    the signal source location.
+
+    Best used for FPV signals where pilots typically use unique channels.
+    The accuracy improves with more kits and closer proximity.
+
+    Limitations:
+    - If multiple transmitters share the same frequency, results will be mixed
+    - Kits geographically far apart will result in lower confidence
+
+    Returns:
+        SignalLocationEstimate with estimated position, confidence, and kit observations.
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    try:
+        # Parse timestamp or use current time
+        if timestamp:
+            try:
+                target_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid timestamp format. Use ISO 8601.")
+        else:
+            target_time = datetime.utcnow()
+
+        # Get signal observations within time window
+        time_start = target_time - timedelta(seconds=time_window_seconds)
+        time_end = target_time + timedelta(seconds=time_window_seconds)
+
+        async with db_pool.acquire() as conn:
+            # Get signal observations from different kits on this frequency
+            signal_query = """
+                SELECT
+                    s.kit_id,
+                    s.power_dbm,
+                    s.freq_mhz,
+                    s.time,
+                    s.lat as signal_lat,
+                    s.lon as signal_lon,
+                    s.pal_conf,
+                    s.ntsc_conf
+                FROM signals s
+                WHERE s.freq_mhz >= $1 - 0.5 AND s.freq_mhz <= $1 + 0.5
+                  AND s.time >= $2 AND s.time <= $3
+                  AND s.power_dbm IS NOT NULL
+                ORDER BY s.time DESC
+            """
+            signal_rows = await conn.fetch(signal_query, freq_mhz, time_start, time_end)
+
+            if not signal_rows:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No signal observations found for {freq_mhz:.1f} MHz in time window"
+                )
+
+            # Get unique kit IDs that observed this signal
+            kit_ids = list(set(row['kit_id'] for row in signal_rows if row['kit_id']))
+
+            if len(kit_ids) < 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No kit observations with power_dbm data available"
+                )
+
+            # Get kit positions from system_health table (closest to observation time)
+            kit_positions = {}
+            for kit_id in kit_ids:
+                kit_pos_query = """
+                    SELECT lat, lon, alt, time
+                    FROM system_health
+                    WHERE kit_id = $1
+                      AND lat IS NOT NULL AND lon IS NOT NULL
+                      AND lat != 0 AND lon != 0
+                    ORDER BY ABS(EXTRACT(EPOCH FROM (time - $2)))
+                    LIMIT 1
+                """
+                kit_row = await conn.fetchrow(kit_pos_query, kit_id, target_time)
+                if kit_row:
+                    kit_positions[kit_id] = {
+                        "lat": float(kit_row['lat']),
+                        "lon": float(kit_row['lon']),
+                        "alt": float(kit_row['alt']) if kit_row['alt'] else 0
+                    }
+
+        if not kit_positions:
+            raise HTTPException(
+                status_code=400,
+                detail="No kit position data available. Ensure kits report GPS in system_health."
+            )
+
+        # Build observations list with kit positions and power_dbm (as rssi)
+        # Use the best (strongest) observation per kit
+        kit_observations = {}
+
+        for row in signal_rows:
+            kit_id = row['kit_id']
+            if kit_id not in kit_positions:
+                continue
+
+            # Keep best observation per kit (highest power_dbm/rssi)
+            current_rssi = row['power_dbm'] or -100
+            if kit_id not in kit_observations or (kit_observations[kit_id].get('rssi') or -100) < current_rssi:
+                kit_observations[kit_id] = {
+                    "kit_id": kit_id,
+                    "kit_lat": kit_positions[kit_id]['lat'],
+                    "kit_lon": kit_positions[kit_id]['lon'],
+                    "rssi": row['power_dbm'],  # power_dbm is rssi for signals
+                    "freq_mhz": row['freq_mhz'],
+                    "time": row['time'].isoformat() if row['time'] else None,
+                    "pal_conf": float(row['pal_conf']) if row['pal_conf'] else None,
+                    "ntsc_conf": float(row['ntsc_conf']) if row['ntsc_conf'] else None
+                }
+
+        observations = list(kit_observations.values())
+
+        if len(observations) < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient observations with kit positions for estimation"
+            )
+
+        # Check for geographically distant kits (warning only)
+        warning = None
+        if len(observations) >= 2:
+            max_kit_distance = 0
+            for i, obs1 in enumerate(observations):
+                for obs2 in observations[i+1:]:
+                    dist = calculate_distance_meters(
+                        obs1['kit_lat'], obs1['kit_lon'],
+                        obs2['kit_lat'], obs2['kit_lon']
+                    )
+                    max_kit_distance = max(max_kit_distance, dist)
+            # If kits are more than 50km apart, warn about potential issues
+            if max_kit_distance > 50000:
+                warning = f"Kits are {max_kit_distance/1000:.1f}km apart - results may be unreliable"
+
+        # Estimate location using linear power weighting (for FPV signals)
+        # Unlike drones with calibrated RSSI, FPV signals have linear power (0-1)
+        estimate = estimate_location_from_linear_power(observations)
+
+        if not estimate:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to calculate location estimate"
+            )
+
+        return SignalLocationEstimate(
+            freq_mhz=freq_mhz,
+            timestamp=target_time,
+            estimated={"lat": estimate['lat'], "lon": estimate['lon']},
+            confidence_radius_m=estimate['confidence_radius_m'],
+            observations=observations,
+            algorithm=estimate['method'],
+            estimated_distances=estimate.get('estimated_distances'),
+            kit_count=len(observations),
+            triangulation_possible=len(observations) >= 3,
+            warning=warning
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to estimate signal location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

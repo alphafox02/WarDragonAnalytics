@@ -333,14 +333,14 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
       "time": "2026-01-20T15:30:00Z",
       "kit_id": "kit-alpha",
       "freq_mhz": 5800.0,
-      "power_dbm": -45.0,
+      "power_dbm": 0.752,
       "bandwidth_mhz": 10.0,
       "lat": 37.7749,
       "lon": -122.4194,
       "alt": 10.0,
       "detection_type": "analog",
-      "pal_conf": 0.85,
-      "ntsc_conf": 0.12,
+      "pal_conf": 85.0,
+      "ntsc_conf": 12.0,
       "source": "suscli",
       "signal_type": "fpv"
     }
@@ -354,12 +354,12 @@ Query FPV and RF signal detections (5.8GHz analog, DJI, etc.).
 - `time` - Detection timestamp (ISO 8601)
 - `kit_id` - Kit that detected the signal
 - `freq_mhz` - Center frequency in MHz
-- `power_dbm` - Signal power in dBm (may be null)
+- `power_dbm` - Linear signal power (0-1 scale, higher = stronger). Note: field name is historical; actual values are NOT dBm
 - `bandwidth_mhz` - Signal bandwidth in MHz
 - `lat`, `lon`, `alt` - Kit GPS position at detection time (may be 0 if no GPS lock)
 - `detection_type` - Signal classification (see below)
-- `pal_conf` - PAL video format confidence (0.0-1.0)
-- `ntsc_conf` - NTSC video format confidence (0.0-1.0)
+- `pal_conf` - PAL video format confidence (0-100%)
+- `ntsc_conf` - NTSC video format confidence (0-100%)
 - `source` - Detection source (e.g., "suscli")
 - `signal_type` - General signal category
 
@@ -1145,6 +1145,119 @@ curl "http://localhost:8090/api/analysis/estimate-location/DJI-TRIANGLE?time_win
 
 ---
 
+### Signal Location Estimation
+
+Estimate FPV signal source location using linear power weighting from multiple kits.
+
+**Endpoint:** `GET /api/analysis/estimate-signal-location`
+
+**Use Cases:**
+- Triangulate FPV drone location when multiple kits detect the same frequency
+- Locate signal sources without Remote ID (analog FPV)
+- Correlate signal detections across distributed sensor network
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `freq_mhz` | float | Yes | - | Signal frequency in MHz (e.g., 5800.0) |
+| `timestamp` | string | No | (now) | ISO 8601 timestamp for the observation |
+| `time_window_seconds` | integer | No | `60` | Time window around timestamp (5-300s) |
+
+**Response:**
+```json
+{
+  "freq_mhz": 5800.0,
+  "timestamp": "2026-01-20T15:30:00Z",
+  "estimated": {
+    "lat": 37.7752,
+    "lon": -122.4191
+  },
+  "confidence_radius_m": 250.5,
+  "observations": [
+    {
+      "kit_id": "kit-alpha",
+      "kit_lat": 37.7740,
+      "kit_lon": -122.4180,
+      "rssi": 0.752,
+      "freq_mhz": 5800.0,
+      "time": "2026-01-20T15:30:00Z",
+      "pal_conf": 85.0,
+      "ntsc_conf": 12.0
+    },
+    {
+      "kit_id": "kit-bravo",
+      "kit_lat": 37.7760,
+      "kit_lon": -122.4210,
+      "rssi": 0.483,
+      "freq_mhz": 5800.0,
+      "time": "2026-01-20T15:30:02Z",
+      "pal_conf": 78.0,
+      "ntsc_conf": 15.0
+    }
+  ],
+  "algorithm": "linear_power_weighted",
+  "estimated_distances": null,
+  "kit_count": 2,
+  "triangulation_possible": false,
+  "warning": null
+}
+```
+
+**Response Fields:**
+- `freq_mhz` - The queried frequency
+- `estimated` - Calculated position based on signal power weighting
+- `confidence_radius_m` - Estimated accuracy radius
+- `observations` - Kit data used for calculation
+  - `rssi` - Linear power (0-1 scale, higher = stronger signal, NOT dBm)
+  - `pal_conf` / `ntsc_conf` - Video standard confidence (0-100%)
+- `algorithm` - Algorithm used: `single_kit_linear`, `linear_power_weighted`, or `linear_power_multikit`
+- `estimated_distances` - Always `null` for signals (distance cannot be calculated from linear power)
+- `kit_count` - Number of kits that detected the signal
+- `triangulation_possible` - True if 3+ kits (improves accuracy)
+- `warning` - Warning message if kits are geographically distant (>50km apart)
+
+**Algorithm:**
+
+Unlike drone triangulation which uses calibrated RSSI (dBm) to estimate distance, signal location uses **linear power weighting**. The FPV detector outputs raw signal power (0-1 scale) which cannot be converted to distance without SDR calibration.
+
+| Kits | Method | Description |
+|------|--------|-------------|
+| 1 | `single_kit_linear` | Returns kit position with uncertainty radius based on signal strength |
+| 2 | `linear_power_weighted` | Weighted centroid where higher power = closer to that kit |
+| 3+ | `linear_power_multikit` | Weighted centroid with improved confidence from multiple observations |
+
+**Signal Power Values:**
+- `1.0` = Very strong signal (source likely nearby)
+- `0.5` = Medium signal strength
+- `0.1` = Weak signal (source likely distant or obstructed)
+
+**Limitations:**
+- Linear power is relative, not calibrated - distance estimation is not possible
+- If multiple transmitters share the same frequency, results will be mixed
+- Kits geographically far apart (>50km) will produce unreliable results (warning returned)
+- Accuracy improves with more kits and closer proximity
+
+**Status Codes:**
+- `200 OK` - Success
+- `400 Bad Request` - Invalid timestamp format or insufficient data
+- `404 Not Found` - No signal observations found for frequency in time window
+- `500 Internal Server Error` - Calculation or database error
+
+**Examples:**
+```bash
+# Estimate location of 5800 MHz signal
+curl "http://localhost:8090/api/analysis/estimate-signal-location?freq_mhz=5800.0"
+
+# Estimate at specific timestamp
+curl "http://localhost:8090/api/analysis/estimate-signal-location?freq_mhz=5800.0&timestamp=2026-01-20T15:30:00Z"
+
+# Estimate with shorter time window (30 seconds)
+curl "http://localhost:8090/api/analysis/estimate-signal-location?freq_mhz=5800.0&time_window_seconds=30"
+```
+
+---
+
 ## Security Pattern Endpoints
 
 Specialized endpoints for security monitoring and threat detection.
@@ -1541,7 +1654,7 @@ All endpoints follow standard HTTP status codes.
   time: string,              // ISO 8601 timestamp
   kit_id: string,
   freq_mhz: number,          // Frequency in MHz
-  power_dbm?: number,        // Signal power in dBm
+  power_dbm?: number,        // Linear signal power (0-1 scale, NOT dBm despite field name)
   bandwidth_mhz?: number,    // Bandwidth in MHz
   lat?: number,              // Detection location latitude
   lon?: number,              // Detection location longitude

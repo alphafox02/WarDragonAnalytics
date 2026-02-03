@@ -259,7 +259,7 @@ class MQTTDatabaseWriter:
                     'time': timestamp,
                     'kit_id': kit_id,
                     'freq_mhz': freq,
-                    'power_dbm': self._safe_float(signal.get('power_dbm')),
+                    'power_dbm': self._safe_float(signal.get('power_dbm') or signal.get('rssi')),
                     'bandwidth_mhz': bandwidth_mhz,
                     'lat': self._safe_float(signal.get('sensor_lat') or signal.get('lat')),
                     'lon': self._safe_float(signal.get('sensor_lon') or signal.get('lon')),
