@@ -154,6 +154,12 @@ if [ -f "timescaledb/05-mqtt-support.sql" ]; then
     $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/05-mqtt-support.sql 2>/dev/null || true
 fi
 
+# Transport field (RF transport type from droneid-go)
+if [ -f "timescaledb/06-transport.sql" ]; then
+    echo "Applying 06-transport.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/06-transport.sql 2>/dev/null || true
+fi
+
 echo -e "${GREEN}[OK] Database schema applied${NC}"
 echo ""
 

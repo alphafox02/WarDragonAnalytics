@@ -181,13 +181,13 @@ class DatabaseWriter:
                         vspeed, height, direction, op_status, runtime, id_type,
                         pilot_lat, pilot_lon, home_lat, home_lon,
                         mac, rssi, freq, ua_type, operator_id, caa_id,
-                        rid_make, rid_model, rid_source, track_type
+                        rid_make, rid_model, rid_source, track_type, transport
                     ) VALUES (
                         :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
                         :vspeed, :height, :direction, :op_status, :runtime, :id_type,
                         :pilot_lat, :pilot_lon, :home_lat, :home_lon,
                         :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
-                        :rid_make, :rid_model, :rid_source, :track_type
+                        :rid_make, :rid_model, :rid_source, :track_type, :transport
                     )
                     ON CONFLICT (time, kit_id, drone_id) DO UPDATE SET
                         lat = EXCLUDED.lat,
@@ -241,7 +241,8 @@ class DatabaseWriter:
                             'rid_make': drone.get('rid', {}).get('make') or drone.get('rid_make') or drone.get('make'),
                             'rid_model': drone.get('rid', {}).get('model') or drone.get('rid_model') or drone.get('model'),
                             'rid_source': drone.get('rid', {}).get('source') or drone.get('rid_source') or drone.get('source'),
-                            'track_type': track_type
+                            'track_type': track_type,
+                            'transport': drone.get('transport')
                         })
                     except Exception as e:
                         logger.warning(f"Failed to prepare drone record: {e}")
@@ -910,8 +911,8 @@ class CollectorService:
 
         async with self._kit_lock:
             try:
-                # Fetch current kits from database
-                db_kits = self.db.fetch_kits_from_db()
+                # Fetch current kits from database (skip MQTT-only kits with no api_url)
+                db_kits = [k for k in self.db.fetch_kits_from_db() if k.get('api_url')]
 
                 # Build sets for comparison
                 current_urls = {k.api_url for k in self.kits}
@@ -987,8 +988,8 @@ class CollectorService:
         logger.info("HTTP client initialized with connection pooling")
 
         # Create kit collectors
-        enabled_kits = [k for k in kit_configs if k.get('enabled', True)]
-        logger.info(f"Starting collectors for {len(enabled_kits)} enabled kits")
+        enabled_kits = [k for k in kit_configs if k.get('enabled', True) and k.get('api_url')]
+        logger.info(f"Starting collectors for {len(enabled_kits)} enabled kits (skipped {sum(1 for k in kit_configs if k.get('enabled', True) and not k.get('api_url'))} MQTT-only kits)")
 
         if not enabled_kits:
             logger.warning("No kits configured. Waiting for kits to be added via API...")

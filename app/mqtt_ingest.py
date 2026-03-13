@@ -119,13 +119,13 @@ class MQTTDatabaseWriter:
                         vspeed, height, direction, op_status, runtime, id_type,
                         pilot_lat, pilot_lon, home_lat, home_lon,
                         mac, rssi, freq, ua_type, operator_id, caa_id,
-                        rid_make, rid_model, rid_source, track_type
+                        rid_make, rid_model, rid_source, track_type, transport
                     ) VALUES (
                         :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
                         :vspeed, :height, :direction, :op_status, :runtime, :id_type,
                         :pilot_lat, :pilot_lon, :home_lat, :home_lon,
                         :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
-                        :rid_make, :rid_model, :rid_source, :track_type
+                        :rid_make, :rid_model, :rid_source, :track_type, :transport
                     )
                     ON CONFLICT (time, kit_id, drone_id) DO UPDATE SET
                         lat = EXCLUDED.lat,
@@ -168,7 +168,8 @@ class MQTTDatabaseWriter:
                     'rid_make': drone.get('rid_make') or drone.get('make'),
                     'rid_model': drone.get('rid_model') or drone.get('model'),
                     'rid_source': drone.get('rid_source') or drone.get('source'),
-                    'track_type': track_type
+                    'track_type': track_type,
+                    'transport': drone.get('transport')
                 })
                 conn.commit()
                 return True

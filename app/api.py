@@ -915,6 +915,7 @@ async def query_drones(
     kit_id: Optional[str] = Query(None, description="Filter by kit ID (comma-separated for multiple)"),
     rid_make: Optional[str] = Query(None, description="Filter by RID make (e.g., DJI, Autel)"),
     track_type: Optional[str] = Query(None, description="Filter by track type: drone or aircraft"),
+    transport: Optional[str] = Query(None, description="Filter by transport type (e.g., WiFi-Beacon, BT5-LR-Extended)"),
     limit: int = Query(1000, description="Maximum number of results", le=10000),
     deduplicate: bool = Query(True, description="Return only latest detection per drone_id (default: true)")
 ):
@@ -961,6 +962,11 @@ async def query_drones(
             params.append(track_type)
             param_counter += 1
 
+        if transport:
+            where_clauses.append(f"transport = ${param_counter}")
+            params.append(transport)
+            param_counter += 1
+
         where_clause = " AND ".join(where_clauses)
 
         if deduplicate:
@@ -970,7 +976,7 @@ async def query_drones(
                 SELECT DISTINCT ON (drone_id)
                     time, kit_id, drone_id, lat, lon, alt, speed, heading,
                     pilot_lat, pilot_lon, home_lat, home_lon, mac, rssi, freq,
-                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type
+                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport
                 FROM drones
                 WHERE {where_clause}
                 ORDER BY drone_id, time DESC
@@ -982,7 +988,7 @@ async def query_drones(
                 SELECT
                     time, kit_id, drone_id, lat, lon, alt, speed, heading,
                     pilot_lat, pilot_lon, home_lat, home_lon, mac, rssi, freq,
-                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type
+                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport
                 FROM drones
                 WHERE {where_clause}
                 ORDER BY time DESC
