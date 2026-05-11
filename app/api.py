@@ -969,6 +969,10 @@ async def query_drones(
 
         where_clause = " AND ".join(where_clauses)
 
+        # v2 extended fields: description / freq_mhz / rid_status / etc. are
+        # added by timescaledb/07-extended-fields-v2.sql and populated by
+        # mqtt_ingest.insert_drone(). They're explicit in the SELECT so the
+        # frontend (map popups, dashboards) sees them in the JSON response.
         if deduplicate:
             # Return only the latest detection per drone_id
             # This prevents showing the same drone 13 times
@@ -976,7 +980,9 @@ async def query_drones(
                 SELECT DISTINCT ON (drone_id)
                     time, kit_id, drone_id, lat, lon, alt, speed, heading,
                     pilot_lat, pilot_lon, home_lat, home_lon, mac, rssi, freq,
-                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport
+                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport,
+                    description, freq_mhz, rid_status, rid_tracking,
+                    rid_lookup_attempted, rid_lookup_success, ua_type_name
                 FROM drones
                 WHERE {where_clause}
                 ORDER BY drone_id, time DESC
@@ -988,7 +994,9 @@ async def query_drones(
                 SELECT
                     time, kit_id, drone_id, lat, lon, alt, speed, heading,
                     pilot_lat, pilot_lon, home_lat, home_lon, mac, rssi, freq,
-                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport
+                    ua_type, operator_id, caa_id, rid_make, rid_model, rid_source, track_type, transport,
+                    description, freq_mhz, rid_status, rid_tracking,
+                    rid_lookup_attempted, rid_lookup_success, ua_type_name
                 FROM drones
                 WHERE {where_clause}
                 ORDER BY time DESC

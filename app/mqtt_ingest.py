@@ -110,7 +110,13 @@ class MQTTDatabaseWriter:
             return False
 
     def insert_drone(self, kit_id: str, drone: Dict) -> bool:
-        """Insert a single drone record"""
+        """Insert a single drone record.
+
+        Captures DragonSync v2.0+ extended fields including `description`
+        (carries DJI O2/O3/O4 protocol markers), normalized `freq_mhz`,
+        FAA RID lookup outcomes, and accuracy strings. Schema columns
+        added by timescaledb/07-extended-fields-v2.sql.
+        """
         try:
             with self.engine.connect() as conn:
                 query = text("""
@@ -119,13 +125,21 @@ class MQTTDatabaseWriter:
                         vspeed, height, direction, op_status, runtime, id_type,
                         pilot_lat, pilot_lon, home_lat, home_lon,
                         mac, rssi, freq, ua_type, operator_id, caa_id,
-                        rid_make, rid_model, rid_source, track_type, transport
+                        rid_make, rid_model, rid_source, track_type, transport,
+                        description, freq_mhz, rid_status, rid_tracking,
+                        rid_lookup_attempted, rid_lookup_success, ua_type_name,
+                        operator_id_type, height_type, ew_dir,
+                        pressure_altitude, gps_accuracy, observed_at
                     ) VALUES (
                         :time, :kit_id, :drone_id, :lat, :lon, :alt, :speed, :heading,
                         :vspeed, :height, :direction, :op_status, :runtime, :id_type,
                         :pilot_lat, :pilot_lon, :home_lat, :home_lon,
                         :mac, :rssi, :freq, :ua_type, :operator_id, :caa_id,
-                        :rid_make, :rid_model, :rid_source, :track_type, :transport
+                        :rid_make, :rid_model, :rid_source, :track_type, :transport,
+                        :description, :freq_mhz, :rid_status, :rid_tracking,
+                        :rid_lookup_attempted, :rid_lookup_success, :ua_type_name,
+                        :operator_id_type, :height_type, :ew_dir,
+                        :pressure_altitude, :gps_accuracy, :observed_at
                     )
                     ON CONFLICT (time, kit_id, drone_id) DO UPDATE SET
                         lat = EXCLUDED.lat,
@@ -134,11 +148,20 @@ class MQTTDatabaseWriter:
                         speed = EXCLUDED.speed,
                         heading = EXCLUDED.heading,
                         vspeed = EXCLUDED.vspeed,
-                        height = EXCLUDED.height
+                        height = EXCLUDED.height,
+                        description = EXCLUDED.description,
+                        rid_status = EXCLUDED.rid_status,
+                        rid_lookup_success = EXCLUDED.rid_lookup_success
                 """)
 
                 timestamp = self._parse_timestamp(drone.get('timestamp'))
                 track_type = drone.get('track_type', 'drone')
+
+                # Empty-string descriptions get normalized to NULL so the column
+                # only carries meaningful values (DJI labels, operator self-ID).
+                description = drone.get('description')
+                if isinstance(description, str) and description.strip() == "":
+                    description = None
 
                 conn.execute(query, {
                     'time': timestamp,
@@ -169,7 +192,21 @@ class MQTTDatabaseWriter:
                     'rid_model': drone.get('rid_model') or drone.get('model'),
                     'rid_source': drone.get('rid_source') or drone.get('source'),
                     'track_type': track_type,
-                    'transport': drone.get('transport')
+                    'transport': drone.get('transport'),
+                    # ---- v2 extended fields (07-extended-fields-v2.sql) ----
+                    'description': description,
+                    'freq_mhz': self._safe_float(drone.get('freq_mhz')),
+                    'rid_status': drone.get('rid_status'),
+                    'rid_tracking': drone.get('rid_tracking'),
+                    'rid_lookup_attempted': drone.get('rid_lookup_attempted'),
+                    'rid_lookup_success': drone.get('rid_lookup_success'),
+                    'ua_type_name': drone.get('ua_type_name'),
+                    'operator_id_type': drone.get('operator_id_type'),
+                    'height_type': drone.get('height_type'),
+                    'ew_dir': drone.get('ew_dir'),
+                    'pressure_altitude': self._safe_float(drone.get('pressure_altitude')),
+                    'gps_accuracy': self._safe_float(drone.get('gps_accuracy')),
+                    'observed_at': self._safe_float(drone.get('observed_at')),
                 })
                 conn.commit()
                 return True
@@ -278,7 +315,12 @@ class MQTTDatabaseWriter:
             return False
 
     def insert_system_health(self, kit_id: str, status: Dict) -> bool:
-        """Insert system health record"""
+        """Insert system health record.
+
+        Captures DragonSync v2.0+ fields: time_source (gpsd / static / system),
+        gpsd_time_utc, and the kit's own publish timestamp. Schema columns
+        added by timescaledb/07-extended-fields-v2.sql.
+        """
         try:
             with self.engine.connect() as conn:
                 query = text("""
@@ -286,12 +328,14 @@ class MQTTDatabaseWriter:
                         time, kit_id, lat, lon, alt,
                         cpu_percent, memory_percent, disk_percent,
                         uptime_hours, temp_cpu, temp_gpu,
-                        pluto_temp, zynq_temp, speed, track, gps_fix
+                        pluto_temp, zynq_temp, speed, track, gps_fix,
+                        time_source, gpsd_time_utc, kit_updated_epoch
                     ) VALUES (
                         :time, :kit_id, :lat, :lon, :alt,
                         :cpu_percent, :memory_percent, :disk_percent,
                         :uptime_hours, :temp_cpu, :temp_gpu,
-                        :pluto_temp, :zynq_temp, :speed, :track, :gps_fix
+                        :pluto_temp, :zynq_temp, :speed, :track, :gps_fix,
+                        :time_source, :gpsd_time_utc, :kit_updated_epoch
                     )
                     ON CONFLICT (time, kit_id) DO UPDATE SET
                         cpu_percent = EXCLUDED.cpu_percent,
@@ -355,7 +399,11 @@ class MQTTDatabaseWriter:
                     'zynq_temp': self._safe_float(status.get('zynq_temp_c') or status.get('zynq_temp')),
                     'speed': self._safe_float(status.get('speed')),
                     'track': self._safe_float(status.get('track')),
-                    'gps_fix': status.get('gps_fix')
+                    'gps_fix': status.get('gps_fix'),
+                    # ---- v2 extended fields (07-extended-fields-v2.sql) ----
+                    'time_source': status.get('time_source'),
+                    'gpsd_time_utc': status.get('gpsd_time_utc'),
+                    'kit_updated_epoch': self._safe_int(status.get('updated')),
                 })
                 conn.commit()
                 return True
@@ -568,14 +616,23 @@ class MQTTIngestService:
                     logger.info("Connected to MQTT broker")
                     reconnect_interval = 5  # Reset on successful connection
 
-                    # Subscribe to all DragonSync topics
-                    # Note: Only subscribe to /attrs for system - /availability sends plain strings, not JSON
+                    # Subscribe to all DragonSync topics.
+                    #
+                    # DragonSync v2.0+ scopes the system topic per-kit:
+                    #   v1: wardragon/system/attrs           (single-kit only)
+                    #   v2: wardragon/system/<kit_id>/attrs  (multi-kit safe)
+                    # We subscribe to the wildcard form so a single subscription
+                    # captures every kit on the broker. (`+` matches exactly one
+                    # topic segment.)
+                    #
+                    # Note: only /attrs payloads are JSON. /availability and
+                    # /state on system topics send plain strings.
                     topics = [
-                        (MQTT_TOPIC_DRONES, 0),       # Aggregate drones
-                        (f"{MQTT_TOPIC_DRONE_PREFIX}#", 0),  # Per-drone topics (includes /attrs but filters by JSON)
-                        (MQTT_TOPIC_AIRCRAFT, 0),    # ADS-B aircraft
-                        (MQTT_TOPIC_SIGNALS, 0),     # FPV signals
-                        (f"{MQTT_TOPIC_SYSTEM}/attrs", 0),  # System status JSON only
+                        (MQTT_TOPIC_DRONES, 0),                  # Aggregate drones
+                        (f"{MQTT_TOPIC_DRONE_PREFIX}#", 0),      # Per-drone topics (filtered by JSON)
+                        (MQTT_TOPIC_AIRCRAFT, 0),                # ADS-B aircraft
+                        (MQTT_TOPIC_SIGNALS, 0),                 # FPV signals
+                        (f"{MQTT_TOPIC_SYSTEM}/+/attrs", 0),     # Per-kit system telemetry (v2 schema)
                     ]
 
                     for topic, qos in topics:
@@ -647,7 +704,10 @@ class MQTTIngestService:
                 self.db.register_mqtt_kit(kit_id)
                 self.known_kits.add(kit_id)
 
-            # Route message to appropriate handler
+            # Route message to appropriate handler.
+            # System topic is per-kit in v2 schema: wardragon/system/<kit_id>/attrs
+            # The startswith+endswith pattern matches both v2 and any future
+            # per-kit subtopics under system without breaking the routing.
             if topic == MQTT_TOPIC_DRONES:
                 await self._handle_drones(kit_id, data)
             elif topic.startswith(MQTT_TOPIC_DRONE_PREFIX):
@@ -656,8 +716,8 @@ class MQTTIngestService:
                 await self._handle_aircraft(kit_id, data)
             elif topic == MQTT_TOPIC_SIGNALS:
                 await self._handle_signal(kit_id, data)
-            elif topic == f"{MQTT_TOPIC_SYSTEM}/attrs":
-                # DragonSync system health (JSON)
+            elif topic.startswith(f"{MQTT_TOPIC_SYSTEM}/") and topic.endswith("/attrs"):
+                # DragonSync v2 per-kit system telemetry (JSON)
                 await self._handle_system(kit_id, data)
             else:
                 logger.debug(f"Unhandled topic: {topic}")

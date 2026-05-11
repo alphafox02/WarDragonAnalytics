@@ -543,6 +543,21 @@ function createPopup(track, options = {}) {
     const safeSpeed = (track.speed != null && !isNaN(track.speed)) ? Number(track.speed).toFixed(1) : 'N/A';
     const safeRssi = track.rssi || 'N/A';
 
+    // DragonSync v2 extended fields. Empty strings -> hidden rows; only render
+    // when there's a meaningful value so popups for older v1 kits stay clean.
+    const description = track.description && String(track.description).trim() ? String(track.description).trim() : null;
+    const transport = track.transport && String(track.transport).trim() ? String(track.transport).trim() : null;
+    const freqMhz = (track.freq_mhz != null && !isNaN(track.freq_mhz)) ? Number(track.freq_mhz).toFixed(1) : null;
+    const descriptionInfo = description
+        ? `<div class="popup-row"><span class="popup-label">Description:</span><span class="popup-value">${description}</span></div>`
+        : '';
+    const transportInfo = transport
+        ? `<div class="popup-row"><span class="popup-label">Transport:</span><span class="popup-value">${transport}</span></div>`
+        : '';
+    const freqInfo = freqMhz
+        ? `<div class="popup-row"><span class="popup-label">Frequency:</span><span class="popup-value">${freqMhz} MHz</span></div>`
+        : '';
+
     // Look up kit name from kits array
     const kitName = getKitName(kitId);
     const kitDisplay = kitName !== kitId ? `${kitName}` : kitId;
@@ -558,10 +573,13 @@ function createPopup(track, options = {}) {
             <span class="popup-label">Type:</span>
             <span class="popup-value">${trackType}</span>
         </div>
+        ${descriptionInfo}
         <div class="popup-row">
             <span class="popup-label">RID:</span>
             <span class="popup-value">${ridMake} ${ridModel}</span>
         </div>
+        ${transportInfo}
+        ${freqInfo}
         ${macInfo}
         ${operatorInfo}
         <div class="popup-row">

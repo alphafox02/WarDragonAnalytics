@@ -225,7 +225,9 @@
         "footer": {
           "countRows": false,
           "fields": "",
-          "reducer": ["sum"],
+          "reducer": [
+            "sum"
+          ],
           "show": false
         },
         "showHeader": true,
@@ -315,7 +317,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-9
+          "le": 1e-09
         },
         "legend": {
           "show": true
@@ -476,6 +478,88 @@
       ],
       "title": "Kit Handoff Tracking (RSSI over Time)",
       "type": "timeseries"
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Protocol Family Breakdown (DragonSync v2)",
+      "description": "Detection counts grouped by radio protocol family. The protocol is derived from DragonSync v2's `description` field (e.g. DJI O4 (Decrypted), DJI Mini 2 (O2)) and the `transport` field (ISM-FHSS for SiK/RFD900, WiFi-NaN / BT5-LR for Remote ID broadcasters). Drones with neither description nor transport fall through to 'Unknown'.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescaledb"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 10
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        },
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Detections"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "gradient-gauge"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "timescaledb"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Group recent drone detections by protocol family.\n-- DragonSync v2 exposes protocol info via the description field\n-- (DJI labels) and transport field (link-layer).\nWITH classified AS (\n  SELECT\n    drone_id,\n    kit_id,\n    CASE\n      WHEN description ILIKE 'DJI%(O4%' THEN 'DJI OcuSync 4'\n      WHEN description ILIKE 'DJI%(O3%' THEN 'DJI OcuSync 3'\n      WHEN description ILIKE 'DJI%(O2%' THEN 'DJI OcuSync 2'\n      WHEN description ILIKE '%Encrypted (O4)%' THEN 'DJI O4 (Encrypted)'\n      WHEN description ILIKE 'DJI%' THEN 'DJI (Other)'\n      WHEN transport ILIKE 'ISM-FHSS%' THEN 'SiK / 900 MHz FHSS'\n      WHEN transport ILIKE 'BT5-LR%' THEN 'Bluetooth 5 LR (RID)'\n      WHEN transport ILIKE 'BT%' THEN 'Bluetooth (RID)'\n      WHEN transport ILIKE 'WiFi-NaN%' THEN 'WiFi NaN (RID)'\n      WHEN transport ILIKE 'WiFi-Beacon%' THEN 'WiFi Beacon (RID)'\n      WHEN transport IS NOT NULL AND transport <> '' THEN transport\n      ELSE 'Unknown'\n    END AS protocol_family\n  FROM drones\n  WHERE time >= $__timeFrom() AND time <= $__timeTo()\n    AND ('$kit_filter' = 'All' OR kit_id = '$kit_filter')\n)\nSELECT\n  protocol_family AS \"Protocol Family\",\n  COUNT(*) AS \"Detections\",\n  COUNT(DISTINCT drone_id) AS \"Unique Drones\",\n  COUNT(DISTINCT kit_id) AS \"Kits\"\nFROM classified\nGROUP BY protocol_family\nORDER BY \"Detections\" DESC",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ]
     }
   ],
   "refresh": "30s",
