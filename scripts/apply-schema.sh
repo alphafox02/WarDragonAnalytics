@@ -71,41 +71,42 @@ if [ ! -f "timescaledb/01-init.sql" ]; then
     exit 1
 fi
 
-# Apply schema
+# Apply schema. 01-init.sql uses bare CREATE TABLE — already-exists errors when
+# re-applied to a populated DB are harmless. Later migrations all use IF NOT
+# EXISTS / ALTER TABLE IF NOT EXISTS, so we fail loudly on any error there to
+# catch real schema drift rather than letting it slip silently.
 echo -e "${YELLOW}Applying database schema...${NC}"
 
-echo "Applying 01-init.sql..."
-$DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql
+apply_strict() {
+    local file="$1"
+    local label="$2"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    echo "Applying ${label}..."
+    if ! $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon -v ON_ERROR_STOP=1 < "$file"; then
+        echo -e "${RED}ERROR: ${label} failed to apply.${NC}"
+        exit 1
+    fi
+}
 
-if [ -f "timescaledb/02-pattern-views.sql" ]; then
-    echo "Applying 02-pattern-views.sql..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql
-fi
+apply_tolerant() {
+    local file="$1"
+    local label="$2"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    echo "Applying ${label}..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < "$file" > /dev/null 2>&1 || true
+}
 
-if [ -f "timescaledb/03-extended-fields.sql" ]; then
-    echo "Applying 03-extended-fields.sql (extended telemetry fields)..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql
-fi
-
-if [ -f "timescaledb/04-audit-log.sql" ]; then
-    echo "Applying 04-audit-log.sql (audit logging table - optional)..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql
-fi
-
-if [ -f "timescaledb/05-mqtt-support.sql" ]; then
-    echo "Applying 05-mqtt-support.sql (MQTT source column)..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/05-mqtt-support.sql
-fi
-
-if [ -f "timescaledb/06-transport.sql" ]; then
-    echo "Applying 06-transport.sql (RF transport field)..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/06-transport.sql
-fi
-
-if [ -f "timescaledb/07-extended-fields-v2.sql" ]; then
-    echo "Applying 07-extended-fields-v2.sql (DragonSync v2 extended fields)..."
-    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/07-extended-fields-v2.sql
-fi
+apply_tolerant "timescaledb/01-init.sql"               "01-init.sql"
+apply_strict   "timescaledb/02-pattern-views.sql"      "02-pattern-views.sql"
+apply_strict   "timescaledb/03-extended-fields.sql"    "03-extended-fields.sql (extended telemetry fields)"
+apply_strict   "timescaledb/04-audit-log.sql"          "04-audit-log.sql (audit logging table)"
+apply_strict   "timescaledb/05-mqtt-support.sql"       "05-mqtt-support.sql (MQTT source column)"
+apply_strict   "timescaledb/06-transport.sql"          "06-transport.sql (RF transport field)"
+apply_strict   "timescaledb/07-extended-fields-v2.sql" "07-extended-fields-v2.sql (DragonSync v2 extended fields)"
 
 echo ""
 echo -e "${GREEN}Schema applied successfully!${NC}"

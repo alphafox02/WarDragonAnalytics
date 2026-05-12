@@ -157,11 +157,16 @@ class MQTTDatabaseWriter:
                 timestamp = self._parse_timestamp(drone.get('timestamp'))
                 track_type = drone.get('track_type', 'drone')
 
-                # Empty-string descriptions get normalized to NULL so the column
-                # only carries meaningful values (DJI labels, operator self-ID).
-                description = drone.get('description')
-                if isinstance(description, str) and description.strip() == "":
-                    description = None
+                # Normalize empty strings to NULL across v2 text fields. Some
+                # kits emit "" for unknown values; leaving them as "" pollutes
+                # dashboard filters that rely on IS NOT NULL.
+                def _nullable_str(key):
+                    v = drone.get(key)
+                    if isinstance(v, str) and v.strip() == "":
+                        return None
+                    return v
+
+                description = _nullable_str('description')
 
                 conn.execute(query, {
                     'time': timestamp,
@@ -196,14 +201,14 @@ class MQTTDatabaseWriter:
                     # ---- v2 extended fields (07-extended-fields-v2.sql) ----
                     'description': description,
                     'freq_mhz': self._safe_float(drone.get('freq_mhz')),
-                    'rid_status': drone.get('rid_status'),
-                    'rid_tracking': drone.get('rid_tracking'),
+                    'rid_status': _nullable_str('rid_status'),
+                    'rid_tracking': _nullable_str('rid_tracking'),
                     'rid_lookup_attempted': drone.get('rid_lookup_attempted'),
                     'rid_lookup_success': drone.get('rid_lookup_success'),
-                    'ua_type_name': drone.get('ua_type_name'),
-                    'operator_id_type': drone.get('operator_id_type'),
-                    'height_type': drone.get('height_type'),
-                    'ew_dir': drone.get('ew_dir'),
+                    'ua_type_name': _nullable_str('ua_type_name'),
+                    'operator_id_type': _nullable_str('operator_id_type'),
+                    'height_type': _nullable_str('height_type'),
+                    'ew_dir': _nullable_str('ew_dir'),
                     'pressure_altitude': self._safe_float(drone.get('pressure_altitude')),
                     'gps_accuracy': self._safe_float(drone.get('gps_accuracy')),
                     'observed_at': self._safe_float(drone.get('observed_at')),
@@ -403,7 +408,11 @@ class MQTTDatabaseWriter:
                     # ---- v2 extended fields (07-extended-fields-v2.sql) ----
                     'time_source': status.get('time_source'),
                     'gpsd_time_utc': status.get('gpsd_time_utc'),
-                    'kit_updated_epoch': self._safe_int(status.get('updated')),
+                    'kit_updated_epoch': self._safe_int(
+                        status.get('updated')
+                        or status.get('kit_updated')
+                        or status.get('published_at')
+                    ),
                 })
                 conn.commit()
                 return True
@@ -744,6 +753,8 @@ class MQTTIngestService:
         for drone in drones:
             if self.db.insert_drone(kit_id, drone):
                 self.stats['drones_received'] += 1
+            else:
+                self.stats['errors'] += 1
 
         if drones:
             logger.debug(f"Kit {kit_id}: Received {len(drones)} drones via MQTT")
@@ -753,6 +764,8 @@ class MQTTIngestService:
         if self.db.insert_drone(kit_id, data):
             self.stats['drones_received'] += 1
             logger.debug(f"Kit {kit_id}: Received drone {data.get('id')} via MQTT")
+        else:
+            self.stats['errors'] += 1
 
     async def _handle_aircraft(self, kit_id: str, data: Dict):
         """Handle aircraft message"""
@@ -764,6 +777,8 @@ class MQTTIngestService:
         for aircraft in aircraft_list:
             if self.db.insert_aircraft(kit_id, aircraft):
                 self.stats['aircraft_received'] += 1
+            else:
+                self.stats['errors'] += 1
 
         if aircraft_list:
             logger.debug(f"Kit {kit_id}: Received {len(aircraft_list)} aircraft via MQTT")
@@ -778,6 +793,8 @@ class MQTTIngestService:
         for signal in signals:
             if self.db.insert_signal(kit_id, signal):
                 self.stats['signals_received'] += 1
+            else:
+                self.stats['errors'] += 1
 
         if signals:
             logger.debug(f"Kit {kit_id}: Received {len(signals)} signals via MQTT")
@@ -789,6 +806,8 @@ class MQTTIngestService:
             # Update kit's last_seen timestamp to keep it 'online'
             self.db.update_kit_last_seen(kit_id)
             logger.debug(f"Kit {kit_id}: Received system status via MQTT")
+        else:
+            self.stats['errors'] += 1
 
     async def _log_stats(self):
         """Periodically log statistics"""

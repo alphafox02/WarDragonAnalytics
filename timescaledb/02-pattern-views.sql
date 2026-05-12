@@ -779,12 +779,12 @@ CREATE INDEX IF NOT EXISTS idx_drones_altitude_anomaly ON drones(alt, time DESC)
 CREATE INDEX IF NOT EXISTS idx_drones_track_type_drone ON drones(time DESC)
     WHERE track_type = 'drone' AND lat IS NOT NULL AND lon IS NOT NULL;
 
--- Index for night activity detection (hour extraction)
-CREATE INDEX IF NOT EXISTS idx_drones_night_hours ON drones(time DESC)
-    WHERE track_type = 'drone'
-    AND lat IS NOT NULL
-    AND lon IS NOT NULL
-    AND (EXTRACT(HOUR FROM time) >= 22 OR EXTRACT(HOUR FROM time) <= 5);
+-- Night activity is matched against EXTRACT(HOUR FROM time) at query time. We
+-- can't index that predicate directly: EXTRACT is STABLE rather than IMMUTABLE
+-- (its result depends on the session timezone), and Postgres requires partial-
+-- index predicates to be IMMUTABLE. The idx_drones_track_type_drone index
+-- above is the same partial set minus the hour clause and is the one
+-- detect_night_activity actually uses.
 
 -- =============================================================================
 -- GRANTS AND PERMISSIONS

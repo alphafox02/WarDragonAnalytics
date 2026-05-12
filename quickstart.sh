@@ -93,16 +93,16 @@ $DOCKER_COMPOSE build
 echo -e "${GREEN}[OK] Docker images ready${NC}"
 echo ""
 
-# Start services
-echo "Starting services..."
-$DOCKER_COMPOSE up -d
+# Bring up TimescaleDB first and apply migrations BEFORE starting the rest of
+# the stack. Otherwise mqtt-ingest/collector race the migrations: they start
+# subscribing to MQTT immediately, the first message tries to INSERT into a
+# table that's missing v2 columns (transport, description, etc.), and inserts
+# fail silently until migrations finish. Order: db -> migrate -> everyone else.
+echo "Starting TimescaleDB..."
+$DOCKER_COMPOSE up -d timescaledb
 
-echo -e "${GREEN}[OK] Services started${NC}"
-echo ""
-
-# Wait for services to be healthy
-echo "Waiting for services to become healthy (this may take up to 60 seconds)..."
-sleep 10
+echo "Waiting for TimescaleDB to become healthy (up to 60 seconds)..."
+sleep 5
 
 TIMEOUT=60
 ELAPSED=0
@@ -123,50 +123,54 @@ fi
 
 echo ""
 
-# Apply database schema (all scripts use IF NOT EXISTS, safe for new and existing installs)
+# Apply database schema (all scripts use IF NOT EXISTS, safe for new and existing installs).
+# Errors here are loud — we need migrations to succeed before mqtt-ingest starts,
+# otherwise it races and drops the first batch of messages.
 echo "Applying database schema..."
 
-# Core schema
-echo "Applying 01-init.sql..."
-$DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/01-init.sql 2>/dev/null || true
+# 01-init.sql uses bare CREATE TABLE — already-exists errors on re-apply against
+# an existing DB are expected and harmless (the tables are already there from
+# the initial postgres entrypoint init). The later migrations all use
+# IF NOT EXISTS / ALTER TABLE IF NOT EXISTS and are strictly idempotent, so we
+# fail loudly on any error there to avoid silent schema drift.
+apply_migration() {
+    local file="$1"
+    local label="$2"
+    local strict="${3:-strict}"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    echo "Applying ${label}..."
+    if [ "$strict" = "strict" ]; then
+        if ! $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon -v ON_ERROR_STOP=1 < "$file" > /dev/null; then
+            echo -e "${RED}ERROR: ${label} failed to apply. Aborting before starting the rest of the stack.${NC}"
+            echo "Re-run: $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < $file"
+            exit 1
+        fi
+    else
+        # Tolerant mode: 01-init.sql on an existing DB will error on CREATE TABLE
+        # statements for tables that already exist. That's expected.
+        $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < "$file" > /dev/null 2>&1 || true
+    fi
+}
 
-# Pattern detection views
-if [ -f "timescaledb/02-pattern-views.sql" ]; then
-    echo "Applying 02-pattern-views.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/02-pattern-views.sql 2>/dev/null || true
-fi
-
-# Extended telemetry fields (adds columns if missing, skips if exist)
-if [ -f "timescaledb/03-extended-fields.sql" ]; then
-    echo "Applying 03-extended-fields.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/03-extended-fields.sql 2>/dev/null || true
-fi
-
-# Audit log table (creates if missing, skips if exists)
-if [ -f "timescaledb/04-audit-log.sql" ]; then
-    echo "Applying 04-audit-log.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql 2>/dev/null || true
-fi
-
-# MQTT support (adds source column to kits table)
-if [ -f "timescaledb/05-mqtt-support.sql" ]; then
-    echo "Applying 05-mqtt-support.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/05-mqtt-support.sql 2>/dev/null || true
-fi
-
-# Transport field (RF transport type from droneid-go)
-if [ -f "timescaledb/06-transport.sql" ]; then
-    echo "Applying 06-transport.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/06-transport.sql 2>/dev/null || true
-fi
-
-# DragonSync v2.0+ extended fields (description, freq_mhz, rid_status, ua_type_name, etc.)
-if [ -f "timescaledb/07-extended-fields-v2.sql" ]; then
-    echo "Applying 07-extended-fields-v2.sql..."
-    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/07-extended-fields-v2.sql 2>/dev/null || true
-fi
+apply_migration "timescaledb/01-init.sql"               "01-init.sql"                                       tolerant
+apply_migration "timescaledb/02-pattern-views.sql"      "02-pattern-views.sql"                              strict
+apply_migration "timescaledb/03-extended-fields.sql"    "03-extended-fields.sql"                            strict
+apply_migration "timescaledb/04-audit-log.sql"          "04-audit-log.sql (audit log)"                      strict
+apply_migration "timescaledb/05-mqtt-support.sql"       "05-mqtt-support.sql (MQTT source column)"          strict
+apply_migration "timescaledb/06-transport.sql"          "06-transport.sql (RF transport field)"             strict
+apply_migration "timescaledb/07-extended-fields-v2.sql" "07-extended-fields-v2.sql (DragonSync v2 fields)"  strict
 
 echo -e "${GREEN}[OK] Database schema applied${NC}"
+echo ""
+
+# Now bring up the rest of the stack — collector, mqtt-ingest, web, grafana,
+# mosquitto. mqtt-ingest can safely start ingesting because the schema is ready.
+echo "Starting remaining services..."
+$DOCKER_COMPOSE up -d
+
+echo -e "${GREEN}[OK] Services started${NC}"
 echo ""
 
 # Display status

@@ -319,13 +319,20 @@ DragonSync publishes to these topics:
 | `wardragon/drone/{id}` | Individual drone updates | JSON object |
 | `wardragon/aircraft` | ADS-B aircraft data | JSON object |
 | `wardragon/signals` | FPV signal detections | JSON object |
-| `wardragon/system/attrs` | System health/status | JSON object |
+| `wardragon/system/<kit_id>/attrs` | System health/status (per-kit, v2 schema) | JSON object |
+
+> **DragonSync v1 vs v2 system topic:** v1 published to the single-kit topic
+> `wardragon/system/attrs`. v2.0+ scopes the topic per kit
+> (`wardragon/system/<kit_id>/attrs`). The ingest service subscribes with the
+> wildcard `wardragon/system/+/attrs`, which captures every kit on the broker.
+> Kits still emitting the v1 topic shape will not be ingested — upgrade
+> DragonSync to v2 or publish to the per-kit topic.
 
 ### Field Name Mapping (Important)
 
 DragonSync's MQTT payload uses different field names than its HTTP API for Home Assistant compatibility. The `mqtt-ingest` service automatically translates these.
 
-**System Health Fields (`wardragon/system/attrs`):**
+**System Health Fields (`wardragon/system/<kit_id>/attrs`):**
 
 | DragonSync MQTT Field | Database Column | Transformation |
 |-----------------------|-----------------|----------------|
