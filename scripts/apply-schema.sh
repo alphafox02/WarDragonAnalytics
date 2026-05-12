@@ -92,6 +92,21 @@ if [ -f "timescaledb/04-audit-log.sql" ]; then
     $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/04-audit-log.sql
 fi
 
+if [ -f "timescaledb/05-mqtt-support.sql" ]; then
+    echo "Applying 05-mqtt-support.sql (MQTT source column)..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/05-mqtt-support.sql
+fi
+
+if [ -f "timescaledb/06-transport.sql" ]; then
+    echo "Applying 06-transport.sql (RF transport field)..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/06-transport.sql
+fi
+
+if [ -f "timescaledb/07-extended-fields-v2.sql" ]; then
+    echo "Applying 07-extended-fields-v2.sql (DragonSync v2 extended fields)..."
+    $DOCKER_COMPOSE exec -T timescaledb psql -U wardragon -d wardragon < timescaledb/07-extended-fields-v2.sql
+fi
+
 echo ""
 echo -e "${GREEN}Schema applied successfully!${NC}"
 echo ""

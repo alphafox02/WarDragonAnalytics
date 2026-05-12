@@ -160,6 +160,12 @@ if [ -f "timescaledb/06-transport.sql" ]; then
     $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/06-transport.sql 2>/dev/null || true
 fi
 
+# DragonSync v2.0+ extended fields (description, freq_mhz, rid_status, ua_type_name, etc.)
+if [ -f "timescaledb/07-extended-fields-v2.sql" ]; then
+    echo "Applying 07-extended-fields-v2.sql..."
+    $DOCKER_CMD exec -i wardragon-timescaledb psql -U wardragon -d wardragon < timescaledb/07-extended-fields-v2.sql 2>/dev/null || true
+fi
+
 echo -e "${GREEN}[OK] Database schema applied${NC}"
 echo ""
 
